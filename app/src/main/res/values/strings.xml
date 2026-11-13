@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">桌面天气特效</string>
+    <string name="xposed_desc">在澎湃OS桌面上叠加下雨、下雪、冰雹特效，可跟随系统天气自动切换</string>
+</resources>
