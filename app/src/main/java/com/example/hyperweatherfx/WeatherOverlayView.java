@@ -42,8 +42,10 @@ public class WeatherOverlayView extends View {
     private static final float[] STREAM_LEN = {0, 0f, 28f, 38f, 50f, 56f};
     private static final float[] STREAM_WIDTH = {0, 0f, 1.3f, 1.7f, 2.1f, 2.4f};
     private static final int[] STREAM_MAX = {0, 0, 10, 20, 32, 44};
-    /** 小雨：每秒新出现的水滴数 */
-    private static final float BEAD_RATE = 1.4f;
+    /** 小雨：雨滴砸在图标左右两侧时，聚成水珠的概率 */
+    private static final float SIDE_BEAD_P = 0.10f;
+    /** 水珠沿图标侧边流下时，离图标边缘的距离（占宽度比例） */
+    private static final float SIDE_INSET = 0.17f;
 
     private static final int[] SNOW_COUNT = {0, 45, 100, 190, 340};
     private static final float[] SNOW_SPEED = {0, 60f, 90f, 130f, 260f};
@@ -76,6 +78,7 @@ public class WeatherOverlayView extends View {
         boolean on;
         int kind;
         float x, y, vx, vy, life, maxLife, size;
+        Icon src; // 水滴从哪个图标滴下来的，穿过它自己时不算撞击
     }
 
     /** 桌面上的一个图标或文件夹，坐标是相对整个窗口的 */
@@ -94,11 +97,13 @@ public class WeatherOverlayView extends View {
         boolean detached;
     }
 
-    /** 图标下沿聚起的水珠 */
+    /** 小雨：雨滴砸在图标侧边后聚成的水珠，沿侧边慢慢流下，再滴落 */
     private static final class B {
         boolean on;
         Icon host;
-        float relX, age, grow, size;
+        float relX0, relX;  // 砸中位置 -> 侧边位置（占图标宽度的比例）
+        float y0, y;        // 距离图标顶部的偏移
+        float age, speed, size;
     }
 
     private final Random rnd = new Random();
@@ -119,9 +124,9 @@ public class WeatherOverlayView extends View {
     private final S[] ss = new S[MAX_S];
     private final B[] bs = new B[MAX_B];
     private float streamAcc = 0f;
-    private float beadAcc = 0f;
 
     // 图标扫描
+    private View scanRoot;
     private final Icon[] icons = new Icon[MAX_ICONS];
     private int iconN = 0;
     private IdentityHashMap<View, Icon> iconMap = new IdentityHashMap<>();
@@ -170,6 +175,11 @@ public class WeatherOverlayView extends View {
         updateLoop();
     }
 
+    /** 告诉覆盖层去哪棵视图树里找桌面图标（覆盖层是独立窗口时必须设置） */
+    public void setScanRoot(View root) {
+        scanRoot = root;
+    }
+
     public void setActive(boolean active) {
         running = active;
         lastFrame = 0;
@@ -205,7 +215,6 @@ public class WeatherOverlayView extends View {
         for (int i = 0; i < MAX_S; i++) ss[i].on = false;
         for (int i = 0; i < MAX_B; i++) bs[i].on = false;
         streamAcc = 0f;
-        beadAcc = 0f;
         flashAge = -1f;
         flashTimer = 1.5f + rnd.nextFloat() * 3f;
         lastScan = 0;
@@ -355,12 +364,23 @@ public class WeatherOverlayView extends View {
             if (p.x < -50f * dp) {
                 respawn = true;
             } else {
-                Icon hit = findIcon(p.x, p.y);
+                Icon hit = findIcon(p.x, p.y, null);
                 if (hit != null) {
                     // 砸到图标或文件夹
                     if (rnd.nextFloat() < RAIN_HIT_P[level]) {
                         float sy = (p.y - hit.t < p.vy * dt * 1.5f) ? hit.t : p.y;
                         emitSplash(p.x, sy, 2, 0.7f);
+                    }
+                    // 小雨：砸在图标左右两侧附近，水会聚到侧边，变成水珠流下
+                    if (level == 1 && hit.full) {
+                        float iw = hit.r - hit.l;
+                        if (iw > 0f) {
+                            float rx = (p.x - hit.l) / iw;
+                            if ((rx < 0.3f || rx > 0.7f) && rnd.nextFloat() < SIDE_BEAD_P) {
+                                spawnSideBead(hit, rx, rx < 0.5f ? SIDE_INSET : 1f - SIDE_INSET,
+                                        Math.max(0f, p.y - hit.t));
+                            }
+                        }
                     }
                     respawn = true;
                 } else if (p.y >= h) {
@@ -382,9 +402,10 @@ public class WeatherOverlayView extends View {
         c.drawLines(lines, 0, count * 4, paint);
     }
 
-    private Icon findIcon(float x, float y) {
+    private Icon findIcon(float x, float y, Icon skip) {
         for (int k = 0; k < iconN; k++) {
             Icon ic = icons[k];
+            if (ic == skip) continue;
             if (x >= ic.l && x <= ic.r && y >= ic.t && y <= ic.b) return ic;
         }
         return null;
@@ -419,11 +440,12 @@ public class WeatherOverlayView extends View {
     }
 
     /** 从图标下沿滴落一滴水 */
-    private void spawnDrip(float x, float y, float vy) {
+    private void spawnDrip(float x, float y, float vy, Icon src) {
         Q q = freeQ();
         if (q == null) return;
         q.on = true;
         q.kind = 1;
+        q.src = src;
         q.x = x;
         q.y = y;
         q.vx = 0f;
@@ -462,7 +484,7 @@ public class WeatherOverlayView extends View {
             if (!q.on || q.kind != 1) continue;
             q.vy += 2400f * dp * dt;
             q.y += q.vy * dt;
-            if (findIcon(q.x, q.y) != null) {
+            if (findIcon(q.x, q.y, q.src) != null) {
                 emitSplash(q.x, q.y, 2, 0.6f);
                 q.on = false;
                 continue;
@@ -510,39 +532,30 @@ public class WeatherOverlayView extends View {
         emitSplash(ic.l + free.relX * (ic.r - ic.l), ic.t, 3, 0.8f);
     }
 
-    private void spawnBead() {
-        Icon ic = pickIcon();
-        if (ic == null) return;
+    private void spawnSideBead(Icon host, float relX0, float relXSide, float y0) {
         B free = null;
         for (int i = 0; i < MAX_B; i++) {
-            if (!bs[i].on) {
-                free = bs[i];
-                break;
-            }
+            if (bs[i].on && bs[i].host == host) return; // 一个图标同时只留一颗，免得太乱
+            if (!bs[i].on && free == null) free = bs[i];
         }
         if (free == null) return;
         free.on = true;
-        free.host = ic;
-        free.relX = 0.2f + rnd.nextFloat() * 0.6f;
+        free.host = host;
+        free.relX0 = relX0;
+        free.relX = relXSide;
+        free.y0 = y0;
+        free.y = y0;
         free.age = 0f;
-        free.grow = 0.6f + rnd.nextFloat() * 0.8f;
-        free.size = (1.6f + rnd.nextFloat() * 1.0f) * dp;
+        free.speed = (14f + rnd.nextFloat() * 10f) * dp;
+        free.size = (1.8f + rnd.nextFloat() * 1.0f) * dp;
     }
 
     private void drawStreamsAndBeads(Canvas c, float dt) {
-        if (iconN > 0) {
-            if (STREAM_RATE[level] > 0f) {
-                streamAcc = Math.min(3f, streamAcc + STREAM_RATE[level] * dt);
-                while (streamAcc >= 1f) {
-                    streamAcc -= 1f;
-                    spawnStream();
-                }
-            } else {
-                beadAcc = Math.min(3f, beadAcc + BEAD_RATE * dt);
-                while (beadAcc >= 1f) {
-                    beadAcc -= 1f;
-                    spawnBead();
-                }
+        if (iconN > 0 && STREAM_RATE[level] > 0f) {
+            streamAcc = Math.min(3f, streamAcc + STREAM_RATE[level] * dt);
+            while (streamAcc >= 1f) {
+                streamAcc -= 1f;
+                spawnStream();
             }
         }
 
@@ -566,7 +579,7 @@ public class WeatherOverlayView extends View {
                 if (s.head >= height) {
                     s.head = height;
                     s.detached = true;
-                    spawnDrip(x, host.b + dp, s.speed * 0.25f);
+                    spawnDrip(x, host.b + dp, s.speed * 0.25f, null);
                 }
                 s.tail = Math.max(0f, s.head - s.lenMax);
             } else {
@@ -580,10 +593,7 @@ public class WeatherOverlayView extends View {
             c.drawLine(x, host.t + s.tail, x, host.t + s.head, paint);
         }
 
-        // 水珠：小雨时在图标下沿慢慢变大，然后滴落
-        paint.setStyle(Paint.Style.FILL);
-        paint.setColor(0xFFD6E8FF);
-        paint.setAlpha(200);
+        // 小雨的水珠：雨滴砸在图标侧边后聚成水珠，沿侧边慢慢流下，越流越大，最后滴落
         for (int i = 0; i < MAX_B; i++) {
             B b = bs[i];
             if (!b.on) continue;
@@ -592,22 +602,36 @@ public class WeatherOverlayView extends View {
                 b.on = false;
                 continue;
             }
+            float height = host.b - host.t;
+            float yEnd = height * 0.74f;
+            float progress = Math.min(1f, b.y / Math.max(1f, yEnd));
             b.age += dt;
-            float x = host.l + b.relX * (host.r - host.l);
-            if (b.age >= b.grow) {
-                spawnDrip(x, host.b + dp, 20f * dp);
+            b.y += (b.speed + 45f * dp * progress) * dt;
+            float slide = Math.min(1f, b.age / 0.35f); // 先从砸中的位置滑向侧边
+            float rel = b.relX0 + (b.relX - b.relX0) * slide;
+            float x = host.l + rel * (host.r - host.l);
+            if (b.y >= yEnd) {
+                spawnDrip(x, host.t + b.y + b.size, 30f * dp, host);
                 b.on = false;
                 continue;
             }
-            float r = b.size * (0.35f + 0.65f * (b.age / b.grow));
-            c.drawCircle(x, host.b - dp * 0.3f + r * 0.4f, r, paint);
+            float r = b.size * (0.45f + 0.55f * progress);
+            paint.setStyle(Paint.Style.STROKE);
+            paint.setStrokeCap(Paint.Cap.ROUND);
+            paint.setStrokeWidth(0.9f * dp);
+            paint.setColor(0xFFD6E8FF);
+            paint.setAlpha(70);
+            c.drawLine(x, host.t + b.y0, x, host.t + b.y, paint);
+            paint.setStyle(Paint.Style.FILL);
+            paint.setAlpha(210);
+            c.drawCircle(x, host.t + b.y, r, paint);
         }
     }
 
     // ---------- 扫描桌面上的图标 ----------
 
     private void scanIcons() {
-        View root = getRootView();
+        View root = scanRoot != null ? scanRoot : getRootView();
         scanNext = new IdentityHashMap<>();
         int prevN = iconN;
         scanN = 0;
@@ -806,4 +830,3 @@ public class WeatherOverlayView extends View {
         }
     }
 }
-    
