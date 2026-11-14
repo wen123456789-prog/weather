@@ -72,15 +72,18 @@ public class WeatherOverlayView extends View {
     /** 雪停（或换成别的天气）后，积雪化完所需的秒数 */
     private static final float PILE_MELT_SECONDS = 40f;
     /** 满高时的雪堆高度（dp）：应用/文件夹、小组件、屏幕底部 */
-    private static final float PILE_MAX_ICON_DP = 9f;
-    private static final float PILE_MAX_WIDGET_DP = 13f;
-    private static final float PILE_MAX_BOTTOM_DP = 22f;
-    /** 应用图标雪堆左右各缩进多少（占宽度比例），避免盖到图标外面 */
-    private static final float PILE_ICON_INSET_X = 0.10f;
-    /** 应用图标雪堆底边压进图标里的深度（dp） */
-    private static final float PILE_ICON_DROP_DP = 3f;
-    /** 小组件雪堆左右各缩进多少（dp），避开小组件的圆角 */
-    private static final float PILE_WIDGET_INSET_DP = 16f;
+    private static final float PILE_MAX_ICON_DP = 15f;
+    private static final float PILE_MAX_WIDGET_DP = 20f;
+    private static final float PILE_MAX_BOTTOM_DP = 34f;
+    /** 应用图标：图案相对整个图标格子，左右各缩进多少（占格子宽度比例） */
+    private static final float ICON_GFX_X = 0.166f;
+    /** 应用图标：图案顶部离格子顶部多少 dp */
+    private static final float ICON_GFX_TOP_DP = 6f;
+    /** 小组件：卡片相对整个小组件视图，左右、上下各缩进多少 dp（雪才能贴着卡片边缘） */
+    private static final float WIDGET_MARGIN_X_DP = 11f;
+    private static final float WIDGET_MARGIN_Y_DP = 6f;
+    /** 小组件卡片的圆角半径（dp） */
+    private static final float WIDGET_RADIUS_DP = 22f;
 
     private static final int MAX_Q = 400;
     private static final int MAX_S = 48;
@@ -175,6 +178,13 @@ public class WeatherOverlayView extends View {
     private final Path path = new Path();
     private final float[] px = new float[48];
     private final float[] py = new float[48];
+    private final float[] puffX = new float[48];
+    private final float[] puffY = new float[48];
+    private final float[] puffR = new float[48];
+    // 雪霜边：三种大小的雪粒，各自一组坐标
+    private final float[][] rim = new float[3][2048];
+    private final int[] rimN = new int[3];
+    private float ptX, ptY, ptNX, ptNY; // locateOnRim 的输出
 
     // 雾
     private int fogCount = 0;
@@ -903,58 +913,199 @@ public class WeatherOverlayView extends View {
             if (pl == null || pl.fill <= 0.001f) continue;
             float iw = ic.r - ic.l;
             if (ic.widget) {
-                float inset = PILE_WIDGET_INSET_DP * dp;
-                drawPile(c, ic.l + inset, ic.r - inset, ic.t + dp,
+                // 小组件：先估出里面那张卡片的位置，雪霜边描在卡片四周，雪帽盖在卡片顶上
+                float mx = WIDGET_MARGIN_X_DP * dp;
+                float my = WIDGET_MARGIN_Y_DP * dp;
+                float cl = ic.l + mx;
+                float cr = ic.r - mx;
+                float ct = ic.t + my;
+                float cb = ic.b - my;
+                float rad = WIDGET_RADIUS_DP * dp;
+                drawRim(c, cl, ct, cr, cb, rad, pl.fill, pl.seed);
+                drawCap(c, cl + rad * 0.6f, cr - rad * 0.6f, ct + dp,
                         PILE_MAX_WIDGET_DP * dp * pl.fill, pl.seed, true, 14);
             } else {
-                float inset = iw * PILE_ICON_INSET_X;
-                drawPile(c, ic.l + inset, ic.r - inset, ic.t + PILE_ICON_DROP_DP * dp,
-                        PILE_MAX_ICON_DP * dp * pl.fill, pl.seed, true, 10);
+                // 应用图标/文件夹：图案大约是格子里左右缩进后的正方形
+                float gl = ic.l + iw * ICON_GFX_X;
+                float gw = iw * (1f - 2f * ICON_GFX_X);
+                float gt = ic.t + ICON_GFX_TOP_DP * dp;
+                drawRim(c, gl, gt, gl + gw, gt + gw, gw * 0.23f, pl.fill, pl.seed);
+                drawCap(c, gl + gw * 0.04f, gl + gw * 0.96f, gt + dp,
+                        PILE_MAX_ICON_DP * dp * pl.fill, pl.seed, true, 9);
             }
         }
         if (bottomFill > 0.001f) {
-            drawPile(c, 0f, w, h, PILE_MAX_BOTTOM_DP * dp * bottomFill, 1.7f, false, 40);
+            drawCap(c, 0f, w, h, PILE_MAX_BOTTOM_DP * dp * bottomFill, 1.7f, false, 26);
         }
         pileLive = bottomFill > 0.001f || !piles.isEmpty();
     }
 
-    /** 画一个雪堆：底边在 baseY，左右范围 left..right，最高 maxH。 */
-    private void drawPile(Canvas c, float left, float right, float baseY, float maxH,
-                          float seed, boolean taper, int n) {
+    /** 伪随机数：同一个 (seed, k, salt) 永远得到同一个 0..1 的值，保证雪霜形状固定不闪。 */
+    private static float hash(float seed, int k, int salt) {
+        float v = (float) Math.sin(seed * 12.9898 + k * 78.233 + salt * 37.719) * 43758.5453f;
+        return v - (float) Math.floor(v);
+    }
+
+    /**
+     * 圆角矩形周长上第 s 个位置（从左上角圆角之后的上边开始，顺时针）。
+     * 结果写进 ptX/ptY（位置）和 ptNX/ptNY（朝外的方向）。
+     */
+    private void locateOnRim(float s, float l, float t, float r, float b, float rad,
+                             float sw, float sh, float arc) {
+        float cx, cy, a;
+        if (s < sw) {                       // 上边
+            ptX = l + rad + s; ptY = t; ptNX = 0f; ptNY = -1f;
+            return;
+        }
+        s -= sw;
+        if (s < arc) {                      // 右上圆角
+            cx = r - rad; cy = t + rad; a = -1.5708f + s / rad;
+            ptNX = (float) Math.cos(a); ptNY = (float) Math.sin(a);
+            ptX = cx + rad * ptNX; ptY = cy + rad * ptNY;
+            return;
+        }
+        s -= arc;
+        if (s < sh) {                       // 右边
+            ptX = r; ptY = t + rad + s; ptNX = 1f; ptNY = 0f;
+            return;
+        }
+        s -= sh;
+        if (s < arc) {                      // 右下圆角
+            cx = r - rad; cy = b - rad; a = s / rad;
+            ptNX = (float) Math.cos(a); ptNY = (float) Math.sin(a);
+            ptX = cx + rad * ptNX; ptY = cy + rad * ptNY;
+            return;
+        }
+        s -= arc;
+        if (s < sw) {                       // 下边
+            ptX = r - rad - s; ptY = b; ptNX = 0f; ptNY = 1f;
+            return;
+        }
+        s -= sw;
+        if (s < arc) {                      // 左下圆角
+            cx = l + rad; cy = b - rad; a = 1.5708f + s / rad;
+            ptNX = (float) Math.cos(a); ptNY = (float) Math.sin(a);
+            ptX = cx + rad * ptNX; ptY = cy + rad * ptNY;
+            return;
+        }
+        s -= arc;
+        if (s < sh) {                       // 左边
+            ptX = l; ptY = b - rad - s; ptNX = -1f; ptNY = 0f;
+            return;
+        }
+        s -= sh;                            // 左上圆角
+        cx = l + rad; cy = t + rad; a = 3.1416f + s / rad;
+        ptNX = (float) Math.cos(a); ptNY = (float) Math.sin(a);
+        ptX = cx + rad * ptNX; ptY = cy + rad * ptNY;
+    }
+
+    /** 沿圆角矩形四周撒一圈雪粒，像结了一层霜。fill 越大雪粒越多越大，顶部先长。 */
+    private void drawRim(Canvas c, float l, float t, float r, float b, float rad,
+                         float fill, float seed) {
+        float w = r - l;
+        float h = b - t;
+        if (w <= 8f * dp || h <= 8f * dp) return;
+        rad = Math.min(rad, Math.min(w, h) * 0.5f);
+        float sw = w - 2f * rad;
+        float sh = h - 2f * rad;
+        float arc = 1.5708f * rad;
+        float perim = 2f * sw + 2f * sh + 4f * arc;
+        float step = Math.max(1.8f * dp, perim / 700f);
+        int n = (int) (perim / step);
+
+        rimN[0] = 0;
+        rimN[1] = 0;
+        rimN[2] = 0;
+        for (int k = 0; k < n; k++) {
+            locateOnRim(perim * k / n, l, t, r, b, rad, sw, sh, arc);
+            float thr = hash(seed, k, 1);
+            if (ptNY < -0.5f) thr *= 0.6f;        // 顶部先积
+            if (fill * 1.2f < thr) continue;
+            float off = (hash(seed, k, 2) - 0.35f) * 3f * dp;
+            float g = hash(seed, k, 3);
+            int gi = g < 0.5f ? 0 : (g < 0.85f ? 1 : 2);
+            int idx = rimN[gi];
+            if (idx + 2 > 2048) continue;
+            rim[gi][idx] = ptX + ptNX * off;
+            rim[gi][idx + 1] = ptY + ptNY * off;
+            rimN[gi] = idx + 2;
+        }
+
+        paint.setStyle(Paint.Style.STROKE);
+        paint.setStrokeCap(Paint.Cap.ROUND);
+        paint.setColor(0xFFF4F8FF);
+        paint.setAlpha(225);
+        float scale = 0.6f + 0.4f * fill;
+        if (rimN[0] > 0) {
+            paint.setStrokeWidth(1.6f * dp * scale);
+            c.drawPoints(rim[0], 0, rimN[0], paint);
+        }
+        if (rimN[1] > 0) {
+            paint.setStrokeWidth(2.8f * dp * scale);
+            c.drawPoints(rim[1], 0, rimN[1], paint);
+        }
+        if (rimN[2] > 0) {
+            paint.setStrokeWidth(4.2f * dp * scale);
+            c.drawPoints(rim[2], 0, rimN[2], paint);
+        }
+    }
+
+    /**
+     * 画一顶蓬松的雪帽：底边在 baseY，左右范围 left..right，最高 maxH。
+     * 由一个实心底座和一排大小不一的雪团叠成，轮廓是起伏的。
+     */
+    private void drawCap(Canvas c, float left, float right, float baseY, float maxH,
+                         float seed, boolean taper, int m) {
         float width = right - left;
-        if (width <= 0f || maxH < 0.4f * dp) return;
-        if (n > 40) n = 40;
-        for (int i = 0; i <= n; i++) {
-            float u = (float) i / n;
-            float env = taper ? (float) Math.pow(Math.sin(Math.PI * u), 0.55) : 1f;
-            float noise = 0.72f + 0.28f * (float) Math.sin(seed + u * (taper ? 9f : 26f));
+        if (width <= 0f || maxH < 0.5f * dp) return;
+        if (m > 40) m = 40;
+
+        // 实心底座
+        for (int i = 0; i <= m; i++) {
+            float u = (float) i / m;
+            float env = taper ? (float) Math.pow(Math.sin(Math.PI * u), 0.5) : 1f;
             px[i] = left + width * u;
-            py[i] = baseY - maxH * env * noise;
+            py[i] = baseY - maxH * 0.55f * env;
         }
         float base = baseY + 1.5f * dp;
         path.reset();
         path.moveTo(px[0], base);
         path.lineTo(px[0], py[0]);
-        for (int i = 1; i <= n; i++) {
+        for (int i = 1; i <= m; i++) {
             float mx = (px[i - 1] + px[i]) * 0.5f;
             float my = (py[i - 1] + py[i]) * 0.5f;
             path.quadTo(px[i - 1], py[i - 1], mx, my);
         }
-        path.lineTo(px[n], py[n]);
-        path.lineTo(px[n], base);
+        path.lineTo(px[m], py[m]);
+        path.lineTo(px[m], base);
         path.close();
 
+        // 雪团
+        for (int i = 0; i < m; i++) {
+            float u = (i + 0.5f) / m;
+            float env = taper ? (float) Math.pow(Math.sin(Math.PI * u), 0.5) : 1f;
+            float noise = 0.70f + 0.18f * (float) Math.sin(seed + u * 7f)
+                    + 0.12f * (float) Math.sin(seed * 1.7f + u * 19f);
+            float hgt = maxH * env * noise;
+            float rr = Math.max(0.9f * dp, hgt * 0.62f);
+            puffX[i] = left + width * u;
+            puffY[i] = baseY - hgt + rr;
+            puffR[i] = rr;
+        }
+
         paint.setStyle(Paint.Style.FILL);
-        // 先画一层偏蓝灰的阴影，再画白色雪面，有点立体感
+        // 先画一层偏蓝灰的阴影，再画白色雪面，有立体感
         paint.setColor(0xFFAFC4DA);
         paint.setAlpha(150);
         c.save();
-        c.translate(0f, 1.4f * dp);
+        c.translate(0f, 1.6f * dp);
         c.drawPath(path, paint);
+        for (int i = 0; i < m; i++) c.drawCircle(puffX[i], puffY[i], puffR[i], paint);
         c.restore();
         paint.setColor(0xFFF6FAFF);
-        paint.setAlpha(240);
+        paint.setAlpha(245);
         c.drawPath(path, paint);
+        for (int i = 0; i < m; i++) c.drawCircle(puffX[i], puffY[i], puffR[i], paint);
     }
 
     // ---------- 冰雹 ----------
@@ -998,4 +1149,4 @@ public class WeatherOverlayView extends View {
             c.restore();
         }
     }
-}
+            }
