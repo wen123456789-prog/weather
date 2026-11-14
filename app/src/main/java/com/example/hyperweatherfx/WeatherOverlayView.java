@@ -12,6 +12,7 @@ import android.graphics.Shader;
 import android.os.SystemClock;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.ImageView;
 
 import java.util.HashMap;
 import java.util.IdentityHashMap;
@@ -81,7 +82,9 @@ public class WeatherOverlayView extends View {
     private static final float ICON_GFX_TOP_DP = 6f;
     /** 小组件：卡片相对整个小组件视图，左右、上下各缩进多少 dp（雪才能贴着卡片边缘） */
     private static final float WIDGET_MARGIN_X_DP = 11f;
-    private static final float WIDGET_MARGIN_Y_DP = 6f;
+    private static final float WIDGET_MARGIN_TOP_DP = 6f;
+    /** 小组件视图底部比卡片多出来的一截（桌面给标题留的位置），雪霜边要把它去掉 */
+    private static final float WIDGET_MARGIN_BOTTOM_DP = 39f;
     /** 小组件卡片的圆角半径（dp） */
     private static final float WIDGET_RADIUS_DP = 22f;
 
@@ -113,6 +116,8 @@ public class WeatherOverlayView extends View {
         boolean alive;
         boolean full;
         boolean widget; // true = 小组件，false = 应用图标或文件夹
+        boolean hasGfx; // 是否找到了图标里真正的图案（ImageView）
+        int gl, gt, gr, gb; // 图案的位置
     }
 
     /** 某个图标/小组件顶上的积雪 */
@@ -166,6 +171,9 @@ public class WeatherOverlayView extends View {
     private int scanN;
     private long lastScan = 0;
     private final Rect tmpRect = new Rect();
+    private final Rect gfxRect = new Rect();
+    private View bestView;
+    private int bestArea;
     private final HashMap<Class<?>, Integer> classCache = new HashMap<>(); // 0无 1图标 2小组件
     private boolean loggedFound = false;
     private int zeroScans = 0;
@@ -755,6 +763,22 @@ public class WeatherOverlayView extends View {
                 ic.widget = kind == 2;
                 ic.full = (tmpRect.bottom - tmpRect.top) >= 0.6f * v.getHeight()
                         && (tmpRect.right - tmpRect.left) >= 0.6f * v.getWidth();
+                ic.hasGfx = false;
+                if (kind == 1) {
+                    // 找图标里真正的图案：最大的那个 ImageView，雪就按它的位置和大小来画
+                    bestView = null;
+                    bestArea = 0;
+                    findGraphic(v, 0);
+                    if (bestView != null
+                            && bestArea >= 0.2f * v.getWidth() * v.getHeight()
+                            && bestView.getGlobalVisibleRect(gfxRect)) {
+                        ic.hasGfx = true;
+                        ic.gl = gfxRect.left;
+                        ic.gt = gfxRect.top;
+                        ic.gr = gfxRect.right;
+                        ic.gb = gfxRect.bottom;
+                    }
+                }
                 scanNext.put(v, ic);
                 icons[scanN++] = ic;
                 return;
@@ -766,6 +790,26 @@ public class WeatherOverlayView extends View {
             for (int i = 0; i < n; i++) {
                 View ch = g.getChildAt(i);
                 if (ch != null) walk(ch, a, depth + 1);
+            }
+        }
+    }
+
+    /** 在图标里（最多往下 4 层）找面积最大的 ImageView，结果放在 bestView/bestArea。 */
+    private void findGraphic(View v, int depth) {
+        if (!(v instanceof ViewGroup) || depth > 3) return;
+        ViewGroup g = (ViewGroup) v;
+        int n = g.getChildCount();
+        for (int i = 0; i < n; i++) {
+            View ch = g.getChildAt(i);
+            if (ch == null || ch.getVisibility() != View.VISIBLE) continue;
+            if (ch instanceof ImageView) {
+                int area = ch.getWidth() * ch.getHeight();
+                if (area > bestArea) {
+                    bestArea = area;
+                    bestView = ch;
+                }
+            } else if (ch instanceof ViewGroup) {
+                findGraphic(ch, depth + 1);
             }
         }
     }
@@ -915,23 +959,36 @@ public class WeatherOverlayView extends View {
             if (ic.widget) {
                 // 小组件：先估出里面那张卡片的位置，雪霜边描在卡片四周，雪帽盖在卡片顶上
                 float mx = WIDGET_MARGIN_X_DP * dp;
-                float my = WIDGET_MARGIN_Y_DP * dp;
                 float cl = ic.l + mx;
                 float cr = ic.r - mx;
-                float ct = ic.t + my;
-                float cb = ic.b - my;
+                float ct = ic.t + WIDGET_MARGIN_TOP_DP * dp;
+                float cb = ic.b - WIDGET_MARGIN_BOTTOM_DP * dp;
                 float rad = WIDGET_RADIUS_DP * dp;
                 drawRim(c, cl, ct, cr, cb, rad, pl.fill, pl.seed);
                 drawCap(c, cl + rad * 0.6f, cr - rad * 0.6f, ct + dp,
                         PILE_MAX_WIDGET_DP * dp * pl.fill, pl.seed, true, 14);
             } else {
-                // 应用图标/文件夹：图案大约是格子里左右缩进后的正方形
-                float gl = ic.l + iw * ICON_GFX_X;
-                float gw = iw * (1f - 2f * ICON_GFX_X);
-                float gt = ic.t + ICON_GFX_TOP_DP * dp;
-                drawRim(c, gl, gt, gl + gw, gt + gw, gw * 0.23f, pl.fill, pl.seed);
-                drawCap(c, gl + gw * 0.04f, gl + gw * 0.96f, gt + dp,
-                        PILE_MAX_ICON_DP * dp * pl.fill, pl.seed, true, 9);
+                // 应用图标/文件夹：优先用图标里真正的图案位置，找不到才按格子估一个正方形
+                float gl;
+                float gt;
+                float gr;
+                float gb;
+                if (ic.hasGfx) {
+                    gl = ic.gl;
+                    gt = ic.gt;
+                    gr = ic.gr;
+                    gb = ic.gb;
+                } else {
+                    gl = ic.l + iw * ICON_GFX_X;
+                    gr = ic.r - iw * ICON_GFX_X;
+                    gt = ic.t + ICON_GFX_TOP_DP * dp;
+                    gb = gt + (gr - gl);
+                }
+                float gw = gr - gl;
+                float gh = gb - gt;
+                drawRim(c, gl, gt, gr, gb, Math.min(gw, gh) * 0.23f, pl.fill, pl.seed);
+                drawCap(c, gl + gw * 0.04f, gr - gw * 0.04f, gt + dp,
+                        PILE_MAX_ICON_DP * dp * pl.fill, pl.seed, true, gw > 1.8f * gh ? 14 : 9);
             }
         }
         if (bottomFill > 0.001f) {
@@ -1010,7 +1067,7 @@ public class WeatherOverlayView extends View {
         float sh = h - 2f * rad;
         float arc = 1.5708f * rad;
         float perim = 2f * sw + 2f * sh + 4f * arc;
-        float step = Math.max(1.8f * dp, perim / 700f);
+        float step = Math.max(1.4f * dp, perim / 900f);
         int n = (int) (perim / step);
 
         rimN[0] = 0;
@@ -1034,8 +1091,12 @@ public class WeatherOverlayView extends View {
         paint.setStyle(Paint.Style.STROKE);
         paint.setStrokeCap(Paint.Cap.ROUND);
         paint.setColor(0xFFF4F8FF);
-        paint.setAlpha(225);
         float scale = 0.6f + 0.4f * fill;
+        // 先描一圈连续的细白边当底，再撒雪粒，这样看起来是一整圈霜，不是一串点
+        paint.setStrokeWidth(2.2f * dp * scale);
+        paint.setAlpha((int) (200f * Math.min(1f, fill * 1.3f)));
+        c.drawRoundRect(l, t, r, b, rad, rad, paint);
+        paint.setAlpha(225);
         if (rimN[0] > 0) {
             paint.setStrokeWidth(1.6f * dp * scale);
             c.drawPoints(rim[0], 0, rimN[0], paint);
@@ -1149,4 +1210,4 @@ public class WeatherOverlayView extends View {
             c.restore();
         }
     }
-            }
+                }
