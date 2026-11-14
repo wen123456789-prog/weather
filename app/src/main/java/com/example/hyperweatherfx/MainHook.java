@@ -3,17 +3,12 @@ package com.example.hyperweatherfx;
 import android.app.Activity;
 import android.content.Context;
 import android.database.Cursor;
-import android.graphics.PixelFormat;
 import android.net.Uri;
 import android.os.Handler;
 import android.os.HandlerThread;
-import android.os.IBinder;
 import android.os.Looper;
 import android.os.SystemClock;
-import android.view.Gravity;
-import android.view.View;
 import android.view.ViewGroup;
-import android.view.WindowManager;
 import android.widget.FrameLayout;
 
 import java.lang.ref.WeakReference;
@@ -88,9 +83,7 @@ public class MainHook implements IXposedHookLoadPackage {
 
         // 仅主线程访问
         private WeakReference<Activity> actRef = new WeakReference<>(null);
-        private WeakReference<Activity> overlayActRef = new WeakReference<>(null);
         private WeatherOverlayView overlay;
-        private boolean overlayInWindow;
         private boolean resumed;
         private volatile Context appCtx;
 
@@ -123,7 +116,7 @@ public class MainHook implements IXposedHookLoadPackage {
             appCtx = a.getApplicationContext();
             resumed = true;
             ensureOverlay(a);
-            if (overlay != null) overlay.setActive(true);
+            overlay.setActive(true);
             main.removeCallbacks(tick);
             tick.run();
         }
@@ -135,103 +128,18 @@ public class MainHook implements IXposedHookLoadPackage {
             if (overlay != null) overlay.setActive(false);
         }
 
-        /**
-         * 依次尝试三种方式添加覆盖层：
-         * 1. 桌面窗口的子窗口  2. 和桌面同一个令牌的普通应用窗口（和弹窗一样）
-         * 前两种都是独立窗口，盖在桌面之上，能盖住小组件；都失败才退回到普通添加方式。
-         */
         private void ensureOverlay(Activity a) {
-            if (overlay != null && overlayActRef.get() == a && overlay.isAttachedToWindow()) {
-                if (!overlayInWindow) overlay.bringToFront();
+            ViewGroup decor = (ViewGroup) a.getWindow().getDecorView();
+            if (overlay != null && overlay.getParent() == decor) {
+                overlay.bringToFront();
                 return;
             }
-            removeOverlay();
-
-            View decor = a.getWindow().getDecorView();
-            IBinder panelToken = decor.getWindowToken();
-            IBinder appToken = a.getWindow().getAttributes().token;
-
-            WeatherOverlayView v = newOverlay(a);
-            if (tryAddWindow(a, v, WindowManager.LayoutParams.TYPE_APPLICATION_PANEL,
-                    panelToken, "子窗口")) {
-                setOverlay(a, v, true);
-                return;
+            if (overlay != null && overlay.getParent() instanceof ViewGroup) {
+                ((ViewGroup) overlay.getParent()).removeView(overlay);
             }
-
-            v = newOverlay(a);
-            if (tryAddWindow(a, v, WindowManager.LayoutParams.TYPE_APPLICATION,
-                    appToken, "应用窗口")) {
-                setOverlay(a, v, true);
-                return;
-            }
-
-            v = newOverlay(a);
-            try {
-                ((ViewGroup) decor).addView(v, new FrameLayout.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-                setOverlay(a, v, false);
-                XposedBridge.log(TAG + "已退回普通方式添加覆盖层（可能盖不住小组件）");
-            } catch (Throwable t) {
-                XposedBridge.log(TAG + "添加覆盖层失败: " + t);
-                overlay = null;
-            }
-        }
-
-        private WeatherOverlayView newOverlay(Activity a) {
-            WeatherOverlayView v = new WeatherOverlayView(a);
-            v.setScanRoot(a.getWindow().getDecorView());
-            return v;
-        }
-
-        private void setOverlay(Activity a, WeatherOverlayView v, boolean inWindow) {
-            overlay = v;
-            overlayInWindow = inWindow;
-            overlayActRef = new WeakReference<>(a);
-        }
-
-        private boolean tryAddWindow(Activity a, WeatherOverlayView v, int type,
-                                     IBinder token, String name) {
-            try {
-                WindowManager.LayoutParams lp = new WindowManager.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                        type,
-                        WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-                                | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
-                                | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
-                                | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
-                                | WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
-                        PixelFormat.TRANSLUCENT);
-                lp.gravity = Gravity.TOP | Gravity.START;
-                lp.layoutInDisplayCutoutMode =
-                        WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
-                lp.setTitle("HyperWeatherFx");
-                if (token != null) lp.token = token;
-                a.getWindowManager().addView(v, lp);
-                XposedBridge.log(TAG + "覆盖层已作为独立窗口添加（" + name + "，盖在小组件之上）");
-                return true;
-            } catch (Throwable t) {
-                XposedBridge.log(TAG + "独立窗口「" + name + "」添加失败: "
-                        + t.getClass().getSimpleName() + " " + t.getMessage());
-                return false;
-            }
-        }
-
-        private void removeOverlay() {
-            WeatherOverlayView o = overlay;
-            overlay = null;
-            if (o == null) return;
-            try {
-                if (overlayInWindow) {
-                    Activity oa = overlayActRef.get();
-                    if (oa != null) oa.getWindowManager().removeViewImmediate(o);
-                } else if (o.getParent() instanceof ViewGroup) {
-                    ((ViewGroup) o.getParent()).removeView(o);
-                }
-            } catch (Throwable t) {
-                XposedBridge.log(TAG + "移除旧覆盖层出错: " + t);
-            }
-            overlayActRef = new WeakReference<>(null);
+            overlay = new WeatherOverlayView(a);
+            decor.addView(overlay, new FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         }
 
         private void evaluate() {
