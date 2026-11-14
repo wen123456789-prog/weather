@@ -87,6 +87,9 @@ public class WeatherOverlayView extends View {
     private static final float WIDGET_MARGIN_BOTTOM_DP = 39f;
     /** 小组件卡片的圆角半径（dp） */
     private static final float WIDGET_RADIUS_DP = 22f;
+    /** 图标/小组件表面的雪粒：最多多少颗，以及大约每多少平方 dp 一颗（调大这个数 = 雪粒更稀、更省电） */
+    private static final int GRAIN_MAX = 320;
+    private static final float GRAIN_AREA_DP2 = 45f;
 
     private static final int MAX_Q = 400;
     private static final int MAX_S = 48;
@@ -124,6 +127,7 @@ public class WeatherOverlayView extends View {
     private static final class Pile {
         float fill;  // 0..1，积雪厚度比例
         float seed;  // 决定雪堆形状的随机数，保证同一个图标上形状固定
+        float[] grains; // 表面雪粒：每颗 4 个数 (横向位置, 纵向位置, 出现时机, 大小)，都是 0..1
     }
 
     /** 从图标上流下的水流 */
@@ -193,6 +197,7 @@ public class WeatherOverlayView extends View {
     private final float[][] rim = new float[3][2048];
     private final int[] rimN = new int[3];
     private float ptX, ptY, ptNX, ptNY; // locateOnRim 的输出
+    private final Path clip = new Path();
 
     // 雾
     private int fogCount = 0;
@@ -964,6 +969,7 @@ public class WeatherOverlayView extends View {
                 float ct = ic.t + WIDGET_MARGIN_TOP_DP * dp;
                 float cb = ic.b - WIDGET_MARGIN_BOTTOM_DP * dp;
                 float rad = WIDGET_RADIUS_DP * dp;
+                drawSurface(c, pl, cl, ct, cr, cb, rad, 0.14f, 0.8f);
                 drawRim(c, cl, ct, cr, cb, rad, pl.fill, pl.seed);
                 drawCap(c, cl + rad * 0.6f, cr - rad * 0.6f, ct + dp,
                         PILE_MAX_WIDGET_DP * dp * pl.fill, pl.seed, true, 14);
@@ -986,7 +992,9 @@ public class WeatherOverlayView extends View {
                 }
                 float gw = gr - gl;
                 float gh = gb - gt;
-                drawRim(c, gl, gt, gr, gb, Math.min(gw, gh) * 0.23f, pl.fill, pl.seed);
+                float irad = Math.min(gw, gh) * 0.23f;
+                drawSurface(c, pl, gl, gt, gr, gb, irad, 0.5f, 1f);
+                drawRim(c, gl, gt, gr, gb, irad, pl.fill, pl.seed);
                 drawCap(c, gl + gw * 0.04f, gr - gw * 0.04f, gt + dp,
                         PILE_MAX_ICON_DP * dp * pl.fill, pl.seed, true, gw > 1.8f * gh ? 14 : 9);
             }
@@ -995,6 +1003,79 @@ public class WeatherOverlayView extends View {
             drawCap(c, 0f, w, h, PILE_MAX_BOTTOM_DP * dp * bottomFill, 1.7f, false, 26);
         }
         pileLive = bottomFill > 0.001f || !piles.isEmpty();
+    }
+
+    /**
+     * 在图标/小组件表面铺一层雪：顶部一层渐渐变淡的白霜，加上一些细小的雪粒（顶部和两侧更密）。
+     * 只画在图标自己的圆角范围内，雪越积越多。
+     */
+    private void drawSurface(Canvas c, Pile pl, float l, float t, float r, float b, float rad,
+                             float veilFrac, float veilStrength) {
+        float w = r - l;
+        float h = b - t;
+        if (w <= 8f * dp || h <= 8f * dp) return;
+        float fill = pl.fill;
+
+        if (pl.grains == null) {
+            float[] g = new float[GRAIN_MAX * 4];
+            for (int k = 0; k < GRAIN_MAX; k++) {
+                float u = hash(pl.seed, k, 11);
+                float v = hash(pl.seed, k, 12);
+                v = v * v;                               // 偏向顶部
+                if (hash(pl.seed, k, 13) < 0.35f) {      // 一部分贴着左右两侧
+                    float e = hash(pl.seed, k, 14);
+                    u = e < 0.5f ? u * u * 0.25f : 1f - u * u * 0.25f;
+                }
+                g[k * 4] = u;
+                g[k * 4 + 1] = v;
+                g[k * 4 + 2] = hash(pl.seed, k, 15) * (0.35f + 0.65f * v); // 顶部的先出现
+                g[k * 4 + 3] = hash(pl.seed, k, 16);
+            }
+            pl.grains = g;
+        }
+
+        rad = Math.min(rad, Math.min(w, h) * 0.5f);
+        clip.reset();
+        clip.addRoundRect(l, t, r, b, rad, rad, Path.Direction.CW);
+        c.save();
+        c.clipPath(clip);
+
+        // 顶部白霜：叠 6 层越来越短的半透明白条，上浓下淡
+        paint.setStyle(Paint.Style.FILL);
+        paint.setColor(0xFFF4F8FF);
+        paint.setAlpha((int) (32f * fill * veilStrength));
+        for (int j = 1; j <= 6; j++) {
+            c.drawRect(l, t, r, t + h * veilFrac * j / 6f, paint);
+        }
+
+        // 雪粒
+        int n = (int) Math.min(GRAIN_MAX, (w * h) / (dp * dp) / GRAIN_AREA_DP2);
+        rimN[0] = 0;
+        rimN[1] = 0;
+        float[] g = pl.grains;
+        for (int k = 0; k < n; k++) {
+            if (fill * 1.1f < g[k * 4 + 2]) continue;
+            int gi = g[k * 4 + 3] < 0.65f ? 0 : 1;
+            int idx = rimN[gi];
+            if (idx + 2 > 2048) continue;
+            rim[gi][idx] = l + g[k * 4] * w;
+            rim[gi][idx + 1] = t + g[k * 4 + 1] * h;
+            rimN[gi] = idx + 2;
+        }
+        paint.setStyle(Paint.Style.STROKE);
+        paint.setStrokeCap(Paint.Cap.ROUND);
+        paint.setColor(0xFFF8FBFF);
+        paint.setAlpha(235);
+        float scale = 0.6f + 0.4f * fill;
+        if (rimN[0] > 0) {
+            paint.setStrokeWidth(1.3f * dp * scale);
+            c.drawPoints(rim[0], 0, rimN[0], paint);
+        }
+        if (rimN[1] > 0) {
+            paint.setStrokeWidth(2.2f * dp * scale);
+            c.drawPoints(rim[1], 0, rimN[1], paint);
+        }
+        c.restore();
     }
 
     /** 伪随机数：同一个 (seed, k, salt) 永远得到同一个 0..1 的值，保证雪霜形状固定不闪。 */
