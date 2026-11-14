@@ -165,9 +165,10 @@ public class MainHook implements IXposedHookLoadPackage {
                 if (!prefs.getBoolean(Prefs.KEY_AUTO, true)) {
                     int t = prefs.getInt(Prefs.KEY_TYPE, 0);
                     int l = prefs.getInt(Prefs.KEY_LEVEL, 1);
-                    if (t < 0 || t > 3) t = 0;
+                    if (t < 0 || t > 4) t = 0;
                     if (l < 1) l = 1;
-                    if (l > 3) l = 3;
+                    int maxL = WeatherMapper.maxLevel(t);
+                    if (l > maxL) l = maxL;
                     return new int[]{t, l};
                 }
                 long now = SystemClock.elapsedRealtime();
