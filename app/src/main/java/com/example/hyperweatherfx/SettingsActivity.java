@@ -19,9 +19,23 @@ public class SettingsActivity extends Activity {
         void pick(int index);
     }
 
+    private static final String[] TYPE_LABELS = {"无", "下雨", "下雪", "冰雹", "雾"};
+
+    /** 下标和 WeatherMapper 里的类型编号一致 */
+    private static final String[][] LEVEL_LABELS = {
+            {},
+            {"小雨", "中雨", "大雨", "暴雨", "雷暴雨"},
+            {"小雪", "中雪", "大雪", "暴雪"},
+            {"小", "中", "大"},
+            {"薄雾", "中雾", "浓雾"},
+    };
+
     private SharedPreferences sp;
     private RadioGroup typeGroup;
     private RadioGroup levelGroup;
+    private LinearLayout levelBox;
+    private TextView levelTitle;
+    private boolean manualEnabled;
 
     @SuppressWarnings("deprecation")
     @Override
@@ -60,26 +74,35 @@ public class SettingsActivity extends Activity {
         root.addView(text("手动模式（关闭「自动」后生效）", 16, true));
 
         root.addView(text("特效类型", 14, false));
-        typeGroup = radios(new String[]{"无", "下雨", "下雪", "冰雹"},
-                clamp(sp.getInt(Prefs.KEY_TYPE, 0), 0, 3),
-                i -> sp.edit().putInt(Prefs.KEY_TYPE, i).apply());
+        int curType = clamp(sp.getInt(Prefs.KEY_TYPE, 0), 0, 4);
+        typeGroup = radios(TYPE_LABELS, curType, i -> {
+            int max = WeatherMapper.maxLevel(i);
+            int lv = clamp(sp.getInt(Prefs.KEY_LEVEL, 1), 1, max);
+            sp.edit().putInt(Prefs.KEY_TYPE, i).putInt(Prefs.KEY_LEVEL, lv).apply();
+            rebuildLevels(i);
+        });
         root.addView(typeGroup);
 
-        root.addView(text("强度", 14, false));
-        levelGroup = radios(new String[]{"小", "中", "大"},
-                clamp(sp.getInt(Prefs.KEY_LEVEL, 1), 1, 3) - 1,
-                i -> sp.edit().putInt(Prefs.KEY_LEVEL, i + 1).apply());
-        root.addView(levelGroup);
+        levelTitle = text("强度", 14, false);
+        root.addView(levelTitle);
+        levelBox = new LinearLayout(this);
+        levelBox.setOrientation(LinearLayout.VERTICAL);
+        root.addView(levelBox);
 
-        setManualEnabled(!swAuto.isChecked());
+        manualEnabled = !swAuto.isChecked();
+        rebuildLevels(curType);
+        setGroupEnabled(typeGroup, manualEnabled);
+
         swAuto.setOnCheckedChangeListener((b, checked) -> {
             sp.edit().putBoolean(Prefs.KEY_AUTO, checked).apply();
-            setManualEnabled(!checked);
+            manualEnabled = !checked;
+            setGroupEnabled(typeGroup, manualEnabled);
+            setGroupEnabled(levelGroup, manualEnabled);
         });
 
         root.addView(text(
-                "自动规则：晴、阴、多云、雾、霾、沙尘不显示特效；小雨、中雨、大雨（暴雨归入大雨）"
-                        + "雨量逐级加大；小雪、中雪、大雪同理；冰雹单独一种特效。\n\n"
+                "自动规则：晴、阴、多云、霾、沙尘不显示特效；雨分小雨、中雨、大雨、暴雨、雷暴雨（雷阵雨按雷暴雨）；"
+                        + "雪分小雪、中雪、大雪、暴雪；另有雾和冰雹特效。\n\n"
                         + "修改后回到桌面几秒内生效。排查问题请在 LSPosed 日志里搜索 HyperWeatherFx。",
                 13, false));
 
@@ -88,12 +111,24 @@ public class SettingsActivity extends Activity {
         setContentView(sv);
     }
 
-    private void setManualEnabled(boolean enabled) {
-        setGroupEnabled(typeGroup, enabled);
-        setGroupEnabled(levelGroup, enabled);
+    private void rebuildLevels(int type) {
+        levelBox.removeAllViews();
+        levelGroup = null;
+        if (type <= 0 || type >= LEVEL_LABELS.length) {
+            levelTitle.setVisibility(View.GONE);
+            return;
+        }
+        levelTitle.setVisibility(View.VISIBLE);
+        String[] labels = LEVEL_LABELS[type];
+        int lv = clamp(sp.getInt(Prefs.KEY_LEVEL, 1), 1, labels.length);
+        levelGroup = radios(labels, lv - 1,
+                i -> sp.edit().putInt(Prefs.KEY_LEVEL, i + 1).apply());
+        levelBox.addView(levelGroup);
+        setGroupEnabled(levelGroup, manualEnabled);
     }
 
     private static void setGroupEnabled(RadioGroup g, boolean enabled) {
+        if (g == null) return;
         g.setEnabled(enabled);
         for (int i = 0; i < g.getChildCount(); i++) {
             g.getChildAt(i).setEnabled(enabled);
