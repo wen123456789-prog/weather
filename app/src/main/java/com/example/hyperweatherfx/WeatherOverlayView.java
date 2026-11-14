@@ -1,9 +1,11 @@
 package com.example.hyperweatherfx;
 
+import android.appwidget.AppWidgetHostView;
 import android.content.Context;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
+import android.graphics.Path;
 import android.graphics.RadialGradient;
 import android.graphics.Rect;
 import android.graphics.Shader;
@@ -13,7 +15,9 @@ import android.view.ViewGroup;
 
 import java.util.HashMap;
 import java.util.IdentityHashMap;
+import java.util.Iterator;
 import java.util.Random;
+import java.util.WeakHashMap;
 
 import de.robv.android.xposed.XposedBridge;
 
@@ -60,6 +64,24 @@ public class WeatherOverlayView extends View {
     private static final int[] FOG_ALPHA = {0, 0x38, 0x48, 0x5A};
     private static final int[] FOG_VEIL = {0, 0x10, 0x1C, 0x2C};
 
+    // ---------- 积雪 ----------
+    /** 积雪从无到积满所需的秒数（按雪的强度：小雪最慢，暴雪最快） */
+    private static final float[] PILE_FILL_SECONDS = {0, 240f, 150f, 90f, 45f};
+    /** 积雪最高能积到「满高」的多少（小雪积得薄一些） */
+    private static final float[] PILE_CAP = {0, 0.55f, 0.8f, 1f, 1f};
+    /** 雪停（或换成别的天气）后，积雪化完所需的秒数 */
+    private static final float PILE_MELT_SECONDS = 40f;
+    /** 满高时的雪堆高度（dp）：应用/文件夹、小组件、屏幕底部 */
+    private static final float PILE_MAX_ICON_DP = 9f;
+    private static final float PILE_MAX_WIDGET_DP = 13f;
+    private static final float PILE_MAX_BOTTOM_DP = 22f;
+    /** 应用图标雪堆左右各缩进多少（占宽度比例），避免盖到图标外面 */
+    private static final float PILE_ICON_INSET_X = 0.10f;
+    /** 应用图标雪堆底边压进图标里的深度（dp） */
+    private static final float PILE_ICON_DROP_DP = 3f;
+    /** 小组件雪堆左右各缩进多少（dp），避开小组件的圆角 */
+    private static final float PILE_WIDGET_INSET_DP = 16f;
+
     private static final int MAX_Q = 400;
     private static final int MAX_S = 48;
     private static final int MAX_B = 24;
@@ -87,6 +109,13 @@ public class WeatherOverlayView extends View {
         int l, t, r, b;
         boolean alive;
         boolean full;
+        boolean widget; // true = 小组件，false = 应用图标或文件夹
+    }
+
+    /** 某个图标/小组件顶上的积雪 */
+    private static final class Pile {
+        float fill;  // 0..1，积雪厚度比例
+        float seed;  // 决定雪堆形状的随机数，保证同一个图标上形状固定
     }
 
     /** 从图标上流下的水流 */
@@ -134,10 +163,18 @@ public class WeatherOverlayView extends View {
     private int scanN;
     private long lastScan = 0;
     private final Rect tmpRect = new Rect();
-    private final HashMap<Class<?>, Boolean> classCache = new HashMap<>();
+    private final HashMap<Class<?>, Integer> classCache = new HashMap<>(); // 0无 1图标 2小组件
     private boolean loggedFound = false;
     private int zeroScans = 0;
     private boolean loggedNone = false;
+
+    // 积雪
+    private final WeakHashMap<View, Pile> piles = new WeakHashMap<>();
+    private float bottomFill = 0f;
+    private boolean pileLive = false;
+    private final Path path = new Path();
+    private final float[] px = new float[48];
+    private final float[] py = new float[48];
 
     // 雾
     private int fogCount = 0;
@@ -188,7 +225,7 @@ public class WeatherOverlayView extends View {
     }
 
     private void updateLoop() {
-        if (running && type != WeatherMapper.NONE) {
+        if (running && (type != WeatherMapper.NONE || pileLive)) {
             postInvalidateOnAnimation();
         } else {
             invalidate();
@@ -207,6 +244,9 @@ public class WeatherOverlayView extends View {
         iconMap.clear();
         for (int i = 0; i < MAX_ICONS; i++) icons[i] = null;
         iconN = 0;
+        piles.clear();
+        bottomFill = 0f;
+        pileLive = false;
         resetDynamics();
     }
 
@@ -312,8 +352,9 @@ public class WeatherOverlayView extends View {
 
     @Override
     protected void onDraw(Canvas c) {
-        if (type == WeatherMapper.NONE) return;
-        if (type == WeatherMapper.FOG ? fogCount == 0 : count == 0) return;
+        boolean typeOk = type != WeatherMapper.NONE
+                && (type == WeatherMapper.FOG ? fogCount > 0 : count > 0);
+        if (!typeOk && !pileLive) return;
 
         long now = SystemClock.uptimeMillis();
         float dt = lastFrame == 0 ? 0.016f : Math.min(0.05f, (now - lastFrame) / 1000f);
@@ -321,27 +362,34 @@ public class WeatherOverlayView extends View {
 
         int w = getWidth();
         int h = getHeight();
-        switch (type) {
-            case WeatherMapper.RAIN:
-                if (now - lastScan >= SCAN_MS) {
-                    lastScan = now;
-                    scanIcons();
-                }
-                drawLightning(c, dt, w, h);
-                drawRain(c, dt, h);
-                drawStreamsAndBeads(c, dt);
-                drawParticles(c, dt, h);
-                break;
-            case WeatherMapper.SNOW:
-                drawSnow(c, dt, w, h);
-                break;
-            case WeatherMapper.HAIL:
-                drawHail(c, dt, h);
-                break;
-            default:
-                drawFog(c, dt, w, h);
-                break;
+
+        boolean needScan = type == WeatherMapper.RAIN || type == WeatherMapper.SNOW || pileLive;
+        if (needScan && now - lastScan >= SCAN_MS) {
+            lastScan = now;
+            scanIcons();
         }
+
+        if (typeOk) {
+            switch (type) {
+                case WeatherMapper.RAIN:
+                    drawLightning(c, dt, w, h);
+                    drawRain(c, dt, h);
+                    drawStreamsAndBeads(c, dt);
+                    drawParticles(c, dt, h);
+                    break;
+                case WeatherMapper.SNOW:
+                    drawSnow(c, dt, w, h);
+                    break;
+                case WeatherMapper.HAIL:
+                    drawHail(c, dt, h);
+                    break;
+                default:
+                    drawFog(c, dt, w, h);
+                    break;
+            }
+        }
+        if (type == WeatherMapper.SNOW || pileLive) drawPiles(c, dt, w, h);
+
         if (running) postInvalidateOnAnimation();
     }
 
@@ -402,10 +450,20 @@ public class WeatherOverlayView extends View {
         c.drawLines(lines, 0, count * 4, paint);
     }
 
+    /** 雨用：只找应用图标和文件夹（不含小组件） */
     private Icon findIcon(float x, float y, Icon skip) {
         for (int k = 0; k < iconN; k++) {
             Icon ic = icons[k];
-            if (ic == skip) continue;
+            if (ic == skip || ic.widget) continue;
+            if (x >= ic.l && x <= ic.r && y >= ic.t && y <= ic.b) return ic;
+        }
+        return null;
+    }
+
+    /** 雪用：图标、文件夹、小组件都算 */
+    private Icon findTarget(float x, float y) {
+        for (int k = 0; k < iconN; k++) {
+            Icon ic = icons[k];
             if (x >= ic.l && x <= ic.r && y >= ic.t && y <= ic.b) return ic;
         }
         return null;
@@ -505,7 +563,7 @@ public class WeatherOverlayView extends View {
         if (iconN == 0) return null;
         for (int k = 0; k < 6; k++) {
             Icon ic = icons[rnd.nextInt(iconN)];
-            if (ic.full) return ic;
+            if (ic.full && !ic.widget) return ic;
         }
         return null;
     }
@@ -665,9 +723,15 @@ public class WeatherOverlayView extends View {
         float a = alphaAcc * v.getAlpha();
         if (a < 0.1f) return;
 
-        if (isIconView(v)) {
-            if (scanN < MAX_ICONS && v.getWidth() > 0 && v.getHeight() > 0
-                    && v.getGlobalVisibleRect(tmpRect)) {
+        int kind = classify(v);
+        if (kind != 0) {
+            boolean ok = scanN < MAX_ICONS && v.getWidth() > 0 && v.getHeight() > 0
+                    && v.getGlobalVisibleRect(tmpRect);
+            if (!ok) return;
+            // 小组件如果大得几乎占满屏幕，多半是外层容器，不当作小组件，继续往里找
+            boolean oversize = kind == 2
+                    && (float) tmpRect.width() * tmpRect.height() > 0.7f * getWidth() * getHeight();
+            if (!oversize) {
                 Icon ic = iconMap.get(v);
                 if (ic == null) {
                     ic = new Icon();
@@ -678,12 +742,13 @@ public class WeatherOverlayView extends View {
                 ic.r = tmpRect.right;
                 ic.b = tmpRect.bottom;
                 ic.alive = true;
+                ic.widget = kind == 2;
                 ic.full = (tmpRect.bottom - tmpRect.top) >= 0.6f * v.getHeight()
                         && (tmpRect.right - tmpRect.left) >= 0.6f * v.getWidth();
                 scanNext.put(v, ic);
                 icons[scanN++] = ic;
+                return;
             }
-            return;
         }
         if (v instanceof ViewGroup) {
             ViewGroup g = (ViewGroup) v;
@@ -695,19 +760,30 @@ public class WeatherOverlayView extends View {
         }
     }
 
-    private boolean isIconView(View v) {
+    /** 0 = 不关心，1 = 应用图标或文件夹，2 = 小组件。结果按类缓存。 */
+    private int classify(View v) {
         Class<?> k = v.getClass();
-        Boolean cached = classCache.get(k);
+        Integer cached = classCache.get(k);
         if (cached != null) return cached;
         String n = k.getName();
-        boolean match = n.startsWith("com.miui.home")
-                && (n.contains("ShortcutIcon") || n.contains("FolderIcon") || n.contains("ItemIcon"));
-        if (!match && n.startsWith("com.miui.home") && n.contains("Icon")) {
+        int kind = 0;
+        if (n.startsWith("com.miui.home")) {
+            if (n.contains("ShortcutIcon") || n.contains("FolderIcon") || n.contains("ItemIcon")) {
+                kind = 1;
+            } else if (v instanceof AppWidgetHostView || (n.contains("Widget") && !n.contains("Icon"))) {
+                kind = 2;
+            }
+        } else if (v instanceof AppWidgetHostView) {
+            kind = 2;
+        }
+        if (kind == 2) {
+            XposedBridge.log(MainHook.TAG + "识别为小组件: " + n);
+        } else if (kind == 0 && n.startsWith("com.miui.home") && n.contains("Icon")) {
             // 方便排查：把名字里带 Icon 却没被识别的类记到日志里
             XposedBridge.log(MainHook.TAG + "未识别的类(含Icon): " + n);
         }
-        classCache.put(k, match);
-        return match;
+        classCache.put(k, kind);
+        return kind;
     }
 
     // ---------- 雷暴雨的闪电 ----------
@@ -775,17 +851,110 @@ public class WeatherOverlayView extends View {
         paint.setStyle(Paint.Style.FILL);
         paint.setColor(Color.WHITE);
         float sway = SNOW_SWAY[level] * dp;
+        float bottomTop = h - PILE_MAX_BOTTOM_DP * dp * bottomFill * 0.6f;
         for (int i = 0; i < count; i++) {
             P p = ps[i];
             p.phase += dt * (1f + p.size * 0.1f);
             p.x += (p.vx + (float) Math.sin(p.phase) * sway) * dt;
             p.y += p.vy * dt;
-            if (p.y - p.size > h) spawn(p, false);
+            // 落到屏幕底部的雪堆上，或落进图标/文件夹/小组件里，就消失，从上面重新飘下
+            if (p.y >= bottomTop || findTarget(p.x, p.y) != null) spawn(p, false);
             if (p.x < -10f * dp) p.x = w + 10f * dp;
             if (p.x > w + 10f * dp) p.x = -10f * dp;
             paint.setAlpha((int) (p.alpha * 255f));
             c.drawCircle(p.x, p.y, p.size, paint);
         }
+    }
+
+    // ---------- 积雪 ----------
+
+    private void drawPiles(Canvas c, float dt, int w, int h) {
+        boolean snowing = type == WeatherMapper.SNOW;
+        if (snowing) {
+            float cap = PILE_CAP[level];
+            float grow = dt / PILE_FILL_SECONDS[level];
+            for (int k = 0; k < iconN; k++) {
+                Icon ic = icons[k];
+                if (!ic.full) continue;
+                Pile pl = piles.get(ic.v);
+                if (pl == null) {
+                    pl = new Pile();
+                    pl.seed = rnd.nextFloat() * 6.2832f;
+                    piles.put(ic.v, pl);
+                }
+                if (pl.fill < cap) pl.fill = Math.min(cap, pl.fill + grow);
+            }
+            if (bottomFill < cap) bottomFill = Math.min(cap, bottomFill + grow);
+        } else {
+            float melt = dt / PILE_MELT_SECONDS;
+            Iterator<Pile> it = piles.values().iterator();
+            while (it.hasNext()) {
+                Pile pl = it.next();
+                pl.fill -= melt;
+                if (pl.fill <= 0f) it.remove();
+            }
+            bottomFill = Math.max(0f, bottomFill - melt);
+        }
+
+        for (int k = 0; k < iconN; k++) {
+            Icon ic = icons[k];
+            if (!ic.full) continue;
+            Pile pl = piles.get(ic.v);
+            if (pl == null || pl.fill <= 0.001f) continue;
+            float iw = ic.r - ic.l;
+            if (ic.widget) {
+                float inset = PILE_WIDGET_INSET_DP * dp;
+                drawPile(c, ic.l + inset, ic.r - inset, ic.t + dp,
+                        PILE_MAX_WIDGET_DP * dp * pl.fill, pl.seed, true, 14);
+            } else {
+                float inset = iw * PILE_ICON_INSET_X;
+                drawPile(c, ic.l + inset, ic.r - inset, ic.t + PILE_ICON_DROP_DP * dp,
+                        PILE_MAX_ICON_DP * dp * pl.fill, pl.seed, true, 10);
+            }
+        }
+        if (bottomFill > 0.001f) {
+            drawPile(c, 0f, w, h, PILE_MAX_BOTTOM_DP * dp * bottomFill, 1.7f, false, 40);
+        }
+        pileLive = bottomFill > 0.001f || !piles.isEmpty();
+    }
+
+    /** 画一个雪堆：底边在 baseY，左右范围 left..right，最高 maxH。 */
+    private void drawPile(Canvas c, float left, float right, float baseY, float maxH,
+                          float seed, boolean taper, int n) {
+        float width = right - left;
+        if (width <= 0f || maxH < 0.4f * dp) return;
+        if (n > 40) n = 40;
+        for (int i = 0; i <= n; i++) {
+            float u = (float) i / n;
+            float env = taper ? (float) Math.pow(Math.sin(Math.PI * u), 0.55) : 1f;
+            float noise = 0.72f + 0.28f * (float) Math.sin(seed + u * (taper ? 9f : 26f));
+            px[i] = left + width * u;
+            py[i] = baseY - maxH * env * noise;
+        }
+        float base = baseY + 1.5f * dp;
+        path.reset();
+        path.moveTo(px[0], base);
+        path.lineTo(px[0], py[0]);
+        for (int i = 1; i <= n; i++) {
+            float mx = (px[i - 1] + px[i]) * 0.5f;
+            float my = (py[i - 1] + py[i]) * 0.5f;
+            path.quadTo(px[i - 1], py[i - 1], mx, my);
+        }
+        path.lineTo(px[n], py[n]);
+        path.lineTo(px[n], base);
+        path.close();
+
+        paint.setStyle(Paint.Style.FILL);
+        // 先画一层偏蓝灰的阴影，再画白色雪面，有点立体感
+        paint.setColor(0xFFAFC4DA);
+        paint.setAlpha(150);
+        c.save();
+        c.translate(0f, 1.4f * dp);
+        c.drawPath(path, paint);
+        c.restore();
+        paint.setColor(0xFFF6FAFF);
+        paint.setAlpha(240);
+        c.drawPath(path, paint);
     }
 
     // ---------- 冰雹 ----------
