@@ -9,6 +9,10 @@ import android.graphics.Path;
 import android.graphics.RadialGradient;
 import android.graphics.Rect;
 import android.graphics.Shader;
+import android.hardware.Sensor;
+import android.hardware.SensorEvent;
+import android.hardware.SensorEventListener;
+import android.hardware.SensorManager;
 import android.os.SystemClock;
 import android.view.View;
 import android.view.ViewGroup;
@@ -90,6 +94,18 @@ public class WeatherOverlayView extends View {
     /** 图标/小组件表面的雪粒：最多多少颗，以及大约每多少平方 dp 一颗（调大这个数 = 雪粒更稀、更省电） */
     private static final int GRAIN_MAX = 320;
     private static final float GRAIN_AREA_DP2 = 45f;
+
+    // ---------- 跟随手机倾斜 ----------
+    /** 倾斜对雨雪方向的影响：0 = 关闭，1 = 完全按真实重力方向，越大斜得越厉害 */
+    private static final float TILT_STRENGTH = 1.0f;
+    /** 最多按倾斜多少算（0.75 约等于倾斜 49 度），再歪就不再继续斜了 */
+    private static final float TILT_MAX = 0.75f;
+    /** 手机基本放平时的死区，避免抖动 */
+    private static final float TILT_DEADZONE = 0.04f;
+    /** 方向变化的平滑速度，越大跟得越快 */
+    private static final float TILT_SMOOTH = 6f;
+    /** 雪比雨轻，倾斜时飘得更明显 */
+    private static final float SNOW_TILT_BOOST = 2.5f;
 
     private static final int MAX_Q = 400;
     private static final int MAX_S = 48;
@@ -207,6 +223,29 @@ public class WeatherOverlayView extends View {
     private float[] fvx = new float[0];
     private Paint[] fogPaints = new Paint[0];
 
+    // 倾斜（重力传感器）
+    private SensorManager sensorManager;
+    private Sensor tiltSensor;
+    private boolean sensorOn = false;
+    private float tiltTarget = 0f; // 传感器给出的目标方向，-1..1，正数 = 往屏幕右边斜
+    private float tilt = 0f;       // 平滑后实际使用的方向
+    private final SensorEventListener tiltListener = new SensorEventListener() {
+        @Override
+        public void onSensorChanged(SensorEvent e) {
+            // 传感器 x 轴读数：手机右边缘朝下倾斜时为负。取反后，正数 = 重力朝屏幕右边
+            float t = -e.values[0] / 9.81f;
+            if (t > TILT_MAX) t = TILT_MAX;
+            if (t < -TILT_MAX) t = -TILT_MAX;
+            if (Math.abs(t) < TILT_DEADZONE) t = 0f;
+            tiltTarget = t * TILT_STRENGTH;
+        }
+
+        @Override
+        public void onAccuracyChanged(Sensor sensor, int accuracy) {
+            // 不需要
+        }
+    };
+
     // 闪电（雷暴雨）
     private float flashTimer = 2f;
     private float flashAge = -1f;
@@ -221,6 +260,17 @@ public class WeatherOverlayView extends View {
         for (int i = 0; i < MAX_Q; i++) qs[i] = new Q();
         for (int i = 0; i < MAX_S; i++) ss[i] = new S();
         for (int i = 0; i < MAX_B; i++) bs[i] = new B();
+        try {
+            sensorManager = (SensorManager) context.getSystemService(Context.SENSOR_SERVICE);
+            if (sensorManager != null) {
+                tiltSensor = sensorManager.getDefaultSensor(Sensor.TYPE_GRAVITY);
+                if (tiltSensor == null) {
+                    tiltSensor = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER);
+                }
+            }
+        } catch (Throwable t) {
+            tiltSensor = null;
+        }
     }
 
     // ---------- 对外接口 ----------
@@ -232,7 +282,28 @@ public class WeatherOverlayView extends View {
         level = lv;
         resetDynamics();
         rebuild();
+        updateSensor();
         updateLoop();
+    }
+
+    /** 只有在桌面上、并且正在下雨/下雪/冰雹时才打开传感器，省电。 */
+    private void updateSensor() {
+        boolean need = running && tiltSensor != null && TILT_STRENGTH > 0f
+                && (type == WeatherMapper.RAIN || type == WeatherMapper.SNOW
+                || type == WeatherMapper.HAIL);
+        if (need == sensorOn) return;
+        try {
+            if (need) {
+                sensorOn = sensorManager.registerListener(tiltListener, tiltSensor,
+                        SensorManager.SENSOR_DELAY_UI);
+            } else {
+                sensorManager.unregisterListener(tiltListener);
+                sensorOn = false;
+                tiltTarget = 0f;
+            }
+        } catch (Throwable t) {
+            sensorOn = false;
+        }
     }
 
     /** 告诉覆盖层去哪棵视图树里找桌面图标（覆盖层是独立窗口时必须设置） */
@@ -244,6 +315,7 @@ public class WeatherOverlayView extends View {
         running = active;
         lastFrame = 0;
         lastScan = 0;
+        updateSensor();
         updateLoop();
     }
 
@@ -264,6 +336,8 @@ public class WeatherOverlayView extends View {
     @Override
     protected void onDetachedFromWindow() {
         super.onDetachedFromWindow();
+        running = false;
+        updateSensor();
         iconMap.clear();
         for (int i = 0; i < MAX_ICONS; i++) icons[i] = null;
         iconN = 0;
@@ -335,6 +409,17 @@ public class WeatherOverlayView extends View {
         }
     }
 
+    /**
+     * 雨滴/冰雹出生的横坐标：要保证斜着飘过整个屏幕高度之后，刚好能铺满屏幕宽度。
+     * ratio = 横向速度 / 纵向速度（正数 = 往右飘）。
+     */
+    private float spawnX(int w, int h, float ratio) {
+        float drift = ratio * h;
+        return drift >= 0f
+                ? rnd.nextFloat() * (w + drift) - drift
+                : rnd.nextFloat() * (w - drift);
+    }
+
     private void spawn(P p, boolean initial) {
         int w = getWidth();
         int h = getHeight();
@@ -348,7 +433,7 @@ public class WeatherOverlayView extends View {
                 p.vy = speed;
                 p.vx = -speed * slant;
                 p.size = RAIN_LEN[level] * dp * (0.7f + rnd.nextFloat() * 0.6f);
-                p.x = rnd.nextFloat() * (w + h * slant * 1.1f);
+                p.x = spawnX(w, h, -slant + tilt);
                 break;
             }
             case WeatherMapper.SNOW: {
@@ -364,7 +449,7 @@ public class WeatherOverlayView extends View {
                 p.vy = speed;
                 p.vx = -speed * 0.12f;
                 p.size = HAIL_SIZE[level] * dp * (0.7f + rnd.nextFloat() * 0.6f);
-                p.x = rnd.nextFloat() * (w + h * 0.2f);
+                p.x = spawnX(w, h, -0.12f + tilt);
                 break;
             }
         }
@@ -382,6 +467,7 @@ public class WeatherOverlayView extends View {
         long now = SystemClock.uptimeMillis();
         float dt = lastFrame == 0 ? 0.016f : Math.min(0.05f, (now - lastFrame) / 1000f);
         lastFrame = now;
+        tilt += (tiltTarget - tilt) * Math.min(1f, dt * TILT_SMOOTH);
 
         int w = getWidth();
         int h = getHeight();
@@ -396,7 +482,7 @@ public class WeatherOverlayView extends View {
             switch (type) {
                 case WeatherMapper.RAIN:
                     drawLightning(c, dt, w, h);
-                    drawRain(c, dt, h);
+                    drawRain(c, dt, w, h);
                     drawStreamsAndBeads(c, dt);
                     drawParticles(c, dt, h);
                     break;
@@ -404,7 +490,7 @@ public class WeatherOverlayView extends View {
                     drawSnow(c, dt, w, h);
                     break;
                 case WeatherMapper.HAIL:
-                    drawHail(c, dt, h);
+                    drawHail(c, dt, w, h);
                     break;
                 default:
                     drawFog(c, dt, w, h);
@@ -418,7 +504,7 @@ public class WeatherOverlayView extends View {
 
     // ---------- 雨 ----------
 
-    private void drawRain(Canvas c, float dt, int h) {
+    private void drawRain(Canvas c, float dt, int w, int h) {
         paint.setStyle(Paint.Style.STROKE);
         paint.setStrokeCap(Paint.Cap.ROUND);
         paint.setStrokeWidth(dp * RAIN_WIDTH[level]);
@@ -428,11 +514,12 @@ public class WeatherOverlayView extends View {
         if (lines.length < count * 4) lines = new float[count * 4];
         for (int i = 0; i < count; i++) {
             P p = ps[i];
-            p.x += p.vx * dt;
+            float vxe = p.vx + tilt * p.vy; // 加上手机倾斜带来的横向速度
+            p.x += vxe * dt;
             p.y += p.vy * dt;
 
             boolean respawn = false;
-            if (p.x < -50f * dp) {
+            if (p.x < -50f * dp || p.x > w + 50f * dp) {
                 respawn = true;
             } else {
                 Icon hit = findIcon(p.x, p.y, null);
@@ -464,10 +551,10 @@ public class WeatherOverlayView extends View {
             }
             if (respawn) spawn(p, false);
 
-            float m = (float) Math.sqrt(p.vx * p.vx + p.vy * p.vy);
+            float m = (float) Math.sqrt(vxe * vxe + p.vy * p.vy);
             lines[i * 4] = p.x;
             lines[i * 4 + 1] = p.y;
-            lines[i * 4 + 2] = p.x - p.vx / m * p.size;
+            lines[i * 4 + 2] = p.x - vxe / m * p.size;
             lines[i * 4 + 3] = p.y - p.vy / m * p.size;
         }
         c.drawLines(lines, 0, count * 4, paint);
@@ -914,7 +1001,7 @@ public class WeatherOverlayView extends View {
         for (int i = 0; i < count; i++) {
             P p = ps[i];
             p.phase += dt * (1f + p.size * 0.1f);
-            p.x += (p.vx + (float) Math.sin(p.phase) * sway) * dt;
+            p.x += (p.vx + tilt * p.vy * SNOW_TILT_BOOST + (float) Math.sin(p.phase) * sway) * dt;
             p.y += p.vy * dt;
             // 落到屏幕底部的雪堆上，或落进图标/文件夹/小组件里，就消失，从上面重新飘下
             if (p.y >= bottomTop || findTarget(p.x, p.y) != null) spawn(p, false);
@@ -1252,7 +1339,7 @@ public class WeatherOverlayView extends View {
 
     // ---------- 冰雹 ----------
 
-    private void drawHail(Canvas c, float dt, int h) {
+    private void drawHail(Canvas c, float dt, int w, int h) {
         paint.setStyle(Paint.Style.FILL);
         paint.setColor(0xFFEAF6FF);
         for (int i = 0; i < count; i++) {
@@ -1261,7 +1348,7 @@ public class WeatherOverlayView extends View {
                 p.vy += 2600f * dp * dt;
                 p.alpha -= dt * 2.2f;
             }
-            p.x += p.vx * dt;
+            p.x += (p.bounced ? p.vx : p.vx + tilt * p.vy) * dt;
             p.y += p.vy * dt;
             if (!p.bounced && p.y >= h - p.size) {
                 p.y = h - p.size;
@@ -1269,7 +1356,7 @@ public class WeatherOverlayView extends View {
                 p.vx *= 0.5f;
                 p.bounced = true;
             }
-            if (p.alpha <= 0f || p.y > h + p.size || p.x < -50f * dp) {
+            if (p.alpha <= 0f || p.y > h + p.size || p.x < -50f * dp || p.x > w + 50f * dp) {
                 spawn(p, false);
             }
             paint.setAlpha((int) (Math.max(0f, p.alpha) * 230f));
@@ -1291,4 +1378,4 @@ public class WeatherOverlayView extends View {
             c.restore();
         }
     }
-                }
+            }
