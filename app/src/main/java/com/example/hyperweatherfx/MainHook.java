@@ -7,9 +7,11 @@ import android.graphics.PixelFormat;
 import android.net.Uri;
 import android.os.Handler;
 import android.os.HandlerThread;
+import android.os.IBinder;
 import android.os.Looper;
 import android.os.SystemClock;
 import android.view.Gravity;
+import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowManager;
 import android.widget.FrameLayout;
@@ -134,8 +136,9 @@ public class MainHook implements IXposedHookLoadPackage {
         }
 
         /**
-         * 优先把覆盖层作为桌面窗口的子窗口添加：它在桌面窗口之上，
-         * 能盖住用独立图层绘制的小组件（图库、时钟等）。失败时退回到普通添加方式。
+         * 依次尝试三种方式添加覆盖层：
+         * 1. 桌面窗口的子窗口  2. 和桌面同一个令牌的普通应用窗口（和弹窗一样）
+         * 前两种都是独立窗口，盖在桌面之上，能盖住小组件；都失败才退回到普通添加方式。
          */
         private void ensureOverlay(Activity a) {
             if (overlay != null && overlayActRef.get() == a && overlay.isAttachedToWindow()) {
@@ -144,13 +147,55 @@ public class MainHook implements IXposedHookLoadPackage {
             }
             removeOverlay();
 
+            View decor = a.getWindow().getDecorView();
+            IBinder panelToken = decor.getWindowToken();
+            IBinder appToken = a.getWindow().getAttributes().token;
+
+            WeatherOverlayView v = newOverlay(a);
+            if (tryAddWindow(a, v, WindowManager.LayoutParams.TYPE_APPLICATION_PANEL,
+                    panelToken, "子窗口")) {
+                setOverlay(a, v, true);
+                return;
+            }
+
+            v = newOverlay(a);
+            if (tryAddWindow(a, v, WindowManager.LayoutParams.TYPE_APPLICATION,
+                    appToken, "应用窗口")) {
+                setOverlay(a, v, true);
+                return;
+            }
+
+            v = newOverlay(a);
+            try {
+                ((ViewGroup) decor).addView(v, new FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+                setOverlay(a, v, false);
+                XposedBridge.log(TAG + "已退回普通方式添加覆盖层（可能盖不住小组件）");
+            } catch (Throwable t) {
+                XposedBridge.log(TAG + "添加覆盖层失败: " + t);
+                overlay = null;
+            }
+        }
+
+        private WeatherOverlayView newOverlay(Activity a) {
             WeatherOverlayView v = new WeatherOverlayView(a);
             v.setScanRoot(a.getWindow().getDecorView());
+            return v;
+        }
+
+        private void setOverlay(Activity a, WeatherOverlayView v, boolean inWindow) {
+            overlay = v;
+            overlayInWindow = inWindow;
+            overlayActRef = new WeakReference<>(a);
+        }
+
+        private boolean tryAddWindow(Activity a, WeatherOverlayView v, int type,
+                                     IBinder token, String name) {
             try {
                 WindowManager.LayoutParams lp = new WindowManager.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT,
                         ViewGroup.LayoutParams.MATCH_PARENT,
-                        WindowManager.LayoutParams.TYPE_APPLICATION_PANEL,
+                        type,
                         WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
                                 | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
                                 | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
@@ -161,26 +206,14 @@ public class MainHook implements IXposedHookLoadPackage {
                 lp.layoutInDisplayCutoutMode =
                         WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
                 lp.setTitle("HyperWeatherFx");
+                if (token != null) lp.token = token;
                 a.getWindowManager().addView(v, lp);
-                overlay = v;
-                overlayInWindow = true;
-                overlayActRef = new WeakReference<>(a);
-                XposedBridge.log(TAG + "覆盖层已作为独立窗口添加（盖在小组件之上）");
-                return;
+                XposedBridge.log(TAG + "覆盖层已作为独立窗口添加（" + name + "，盖在小组件之上）");
+                return true;
             } catch (Throwable t) {
-                XposedBridge.log(TAG + "独立窗口添加失败，改用普通方式: " + t);
-            }
-
-            try {
-                ViewGroup decor = (ViewGroup) a.getWindow().getDecorView();
-                decor.addView(v, new FrameLayout.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-                overlay = v;
-                overlayInWindow = false;
-                overlayActRef = new WeakReference<>(a);
-            } catch (Throwable t) {
-                XposedBridge.log(TAG + "添加覆盖层失败: " + t);
-                overlay = null;
+                XposedBridge.log(TAG + "独立窗口「" + name + "」添加失败: "
+                        + t.getClass().getSimpleName() + " " + t.getMessage());
+                return false;
             }
         }
 
