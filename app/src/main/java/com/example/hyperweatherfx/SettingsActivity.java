@@ -1,9 +1,9 @@
+
 package com.example.hyperweatherfx;
 
 import android.app.Activity;
 import android.content.Context;
 import android.content.SharedPreferences;
-import android.content.res.ColorStateList;
 import android.content.res.Configuration;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
@@ -14,7 +14,6 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
-import android.widget.Switch;
 import android.widget.TextView;
 
 /** 模块设置界面：顶部横幅、总开关、自动/手动、手动时的类型和强度。跟随系统深色/浅色。 */
@@ -80,20 +79,40 @@ public class SettingsActivity extends Activity {
 
         // ---- 卡片一：总开关和自动模式 ----
         LinearLayout general = card();
-        Switch swEnabled = newSwitch(sp.getBoolean(Prefs.KEY_ENABLED, true));
+
+        HyperSwitch swEnabled = newSwitch(
+                sp.getBoolean(Prefs.KEY_ENABLED, true)
+        );
+
         swEnabled.setOnCheckedChangeListener((b, on) -> {
             sp.edit().putBoolean(Prefs.KEY_ENABLED, on).apply();
             refreshSummary();
         });
-        general.addView(switchRow("启用特效", "关掉后，桌面上不显示任何天气特效", swEnabled));
+
+        general.addView(switchRow(
+                "启用特效",
+                "关掉后，桌面上不显示任何天气特效",
+                swEnabled
+        ));
+
         general.addView(divider());
-        Switch swAuto = newSwitch(sp.getBoolean(Prefs.KEY_AUTO, true));
+
+        HyperSwitch swAuto = newSwitch(
+                sp.getBoolean(Prefs.KEY_AUTO, true)
+        );
+
         swAuto.setOnCheckedChangeListener((b, on) -> {
             sp.edit().putBoolean(Prefs.KEY_AUTO, on).apply();
             applyManualState(!on);
             refreshSummary();
         });
-        general.addView(switchRow("自动：跟随系统天气", "读取系统天气，天气变了特效跟着变", swAuto));
+
+        general.addView(switchRow(
+                "自动：跟随系统天气",
+                "读取系统天气，天气变了特效跟着变",
+                swAuto
+        ));
+
         root.addView(general);
 
         // ---- 卡片二：手动设置 ----
@@ -101,27 +120,38 @@ public class SettingsActivity extends Activity {
         manualCard.addView(pad(text("手动设置", 16, cText, true), 0, 12, 0, 0));
         manualCard.addView(text("先关掉上面的「自动」，这里才能选择", 12.5f, cSub, false));
         manualCard.addView(sectionLabel("特效类型"));
+
         int curType = clamp(sp.getInt(Prefs.KEY_TYPE, 0), 0, 4);
+
         manualCard.addView(chipGroup(TYPE_LABELS, curType, i -> {
             int max = WeatherMapper.maxLevel(i);
             int lv = clamp(sp.getInt(Prefs.KEY_LEVEL, 1), 1, max);
-            sp.edit().putInt(Prefs.KEY_TYPE, i).putInt(Prefs.KEY_LEVEL, lv).apply();
+            sp.edit()
+                    .putInt(Prefs.KEY_TYPE, i)
+                    .putInt(Prefs.KEY_LEVEL, lv)
+                    .apply();
+
             rebuildLevels(i);
             refreshSummary();
         }));
+
         levelTitle = sectionLabel("强度");
         manualCard.addView(levelTitle);
+
         levelBox = new LinearLayout(this);
         levelBox.setOrientation(LinearLayout.VERTICAL);
         manualCard.addView(levelBox);
         manualCard.addView(spacer(12));
+
         root.addView(manualCard);
+
         applyManualState(!swAuto.isChecked());
         rebuildLevels(curType);
 
         // ---- 卡片三：说明 ----
         LinearLayout help = card();
         help.addView(pad(text("说明", 16, cText, true), 0, 12, 0, 4));
+
         TextView body = text(
                 "自动规则\n"
                         + "晴、阴、多云、霾、沙尘：不显示特效\n"
@@ -132,7 +162,9 @@ public class SettingsActivity extends Activity {
                         + "雨、雪、冰雹会跟着手机左右倾斜改变方向\n"
                         + "下雪时，雪会慢慢积在图标、文件夹、小组件顶部和屏幕底部，雪停后慢慢化掉\n\n"
                         + "修改后回到桌面几秒内生效。遇到问题请在 LSPosed 日志里搜索 HyperWeatherFx。",
-                13.5f, cSub, false);
+                13.5f, cSub, false
+        );
+
         body.setLineSpacing(0f, 1.25f);
         body.setPadding(0, 0, 0, dp(14));
         help.addView(body);
@@ -173,8 +205,11 @@ public class SettingsActivity extends Activity {
     }
 
     private int dp(float v) {
-        return (int) TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, v,
-                getResources().getDisplayMetrics());
+        return (int) TypedValue.applyDimension(
+                TypedValue.COMPLEX_UNIT_DIP,
+                v,
+                getResources().getDisplayMetrics()
+        );
     }
 
     private static int clamp(int v, int lo, int hi) {
@@ -193,7 +228,11 @@ public class SettingsActivity extends Activity {
         t.setText(s);
         t.setTextSize(TypedValue.COMPLEX_UNIT_SP, size);
         t.setTextColor(color);
-        if (bold) t.setTypeface(null, Typeface.BOLD);
+
+        if (bold) {
+            t.setTypeface(null, Typeface.BOLD);
+        }
+
         return t;
     }
 
@@ -216,7 +255,9 @@ public class SettingsActivity extends Activity {
         View v = new View(this);
         v.setBackgroundColor(cLine);
         v.setLayoutParams(new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, Math.max(1, dp(0.5f))));
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                Math.max(1, dp(0.5f))
+        ));
         return v;
     }
 
@@ -225,10 +266,15 @@ public class SettingsActivity extends Activity {
         l.setOrientation(LinearLayout.VERTICAL);
         l.setBackground(round(cCard, 18));
         l.setPadding(dp(16), dp(4), dp(16), dp(4));
+
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+        );
+
         lp.topMargin = dp(12);
         l.setLayoutParams(lp);
+
         return l;
     }
 
@@ -237,63 +283,78 @@ public class SettingsActivity extends Activity {
     private View buildHeader(boolean active) {
         LinearLayout h = new LinearLayout(this);
         h.setOrientation(LinearLayout.VERTICAL);
-        GradientDrawable bg = new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
-                new int[]{0xFF2B3A67, 0xFF0E1530});
+
+        GradientDrawable bg = new GradientDrawable(
+                GradientDrawable.Orientation.TOP_BOTTOM,
+                new int[]{0xFF2B3A67, 0xFF0E1530}
+        );
+
         bg.setCornerRadius(dp(22));
         h.setBackground(bg);
         h.setPadding(dp(20), dp(22), dp(20), dp(20));
 
         h.addView(text("桌面天气特效", 24, 0xFFFFFFFF, true));
+
         summary = text("", 14, 0xFFC9D7F5, false);
         summary.setPadding(0, dp(6), 0, dp(14));
         h.addView(summary);
 
-        TextView pill = text(active ? "●  模块已生效"
-                : "⚠  还没在 LSPosed 里启用：请启用并勾选「系统桌面」", 12.5f,
-                active ? 0xFFBDF5D0 : 0xFFFFD38A, false);
+        TextView pill = text(
+                active ? "●  模块已生效"
+                        : "⚠  还没在 LSPosed 里启用：请启用并勾选「系统桌面」",
+                12.5f,
+                active ? 0xFFBDF5D0 : 0xFFFFD38A,
+                false
+        );
+
         pill.setBackground(round(0x26FFFFFF, 14));
         pill.setPadding(dp(12), dp(6), dp(12), dp(6));
+
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+        );
+
         pill.setLayoutParams(lp);
         h.addView(pill);
+
         return h;
     }
 
     private void refreshSummary() {
         if (summary == null) return;
+
         String s;
+
         if (!sp.getBoolean(Prefs.KEY_ENABLED, true)) {
             s = "特效已关闭";
         } else if (sp.getBoolean(Prefs.KEY_AUTO, true)) {
             s = "自动 · 跟随系统天气";
         } else {
             int t = clamp(sp.getInt(Prefs.KEY_TYPE, 0), 0, 4);
+
             if (t == 0) {
                 s = "手动 · 无特效";
             } else {
                 String[] lv = LEVEL_LABELS[t];
                 int l = clamp(sp.getInt(Prefs.KEY_LEVEL, 1), 1, lv.length);
-                s = "手动 · " + ((t == 1 || t == 2) ? lv[l - 1] : TYPE_LABELS[t] + " · " + lv[l - 1]);
+
+                s = "手动 · " + ((t == 1 || t == 2)
+                        ? lv[l - 1]
+                        : TYPE_LABELS[t] + " · " + lv[l - 1]);
             }
         }
+
         summary.setText("当前：" + s);
     }
 
     // ---------- 开关行 ----------
 
-    private Switch newSwitch(boolean checked) {
-        Switch sw = new Switch(this);
-        sw.setChecked(checked);
-        int[][] states = {{android.R.attr.state_checked}, {}};
-        sw.setThumbTintList(new ColorStateList(states,
-                new int[]{cAccent, dark ? 0xFFB8C0D4 : 0xFFFFFFFF}));
-        sw.setTrackTintList(new ColorStateList(states,
-                new int[]{(cAccent & 0x00FFFFFF) | 0x66000000, dark ? 0xFF3A4254 : 0xFFD3D8E3}));
-        return sw;
+    private HyperSwitch newSwitch(boolean checked) {
+        return new HyperSwitch(this, dark, cAccent, checked);
     }
 
-    private View switchRow(String title, String sub, Switch sw) {
+    private View switchRow(String title, String sub, HyperSwitch sw) {
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.CENTER_VERTICAL);
@@ -301,15 +362,24 @@ public class SettingsActivity extends Activity {
 
         LinearLayout texts = new LinearLayout(this);
         texts.setOrientation(LinearLayout.VERTICAL);
-        texts.setLayoutParams(new LinearLayout.LayoutParams(0,
-                ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
+        texts.setLayoutParams(new LinearLayout.LayoutParams(
+                0,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                1f
+        ));
+
         texts.addView(text(title, 16, cText, false));
+
         TextView st = text(sub, 12.5f, cSub, false);
         st.setPadding(0, dp(2), dp(12), 0);
         texts.addView(st);
 
+        sw.setContentDescription(title + "开关");
+
         row.addView(texts);
         row.addView(sw);
+
         return row;
     }
 
@@ -317,20 +387,27 @@ public class SettingsActivity extends Activity {
 
     private void applyManualState(boolean enabled) {
         manualEnabled = enabled;
-        if (manualCard != null) manualCard.setAlpha(enabled ? 1f : 0.4f);
+
+        if (manualCard != null) {
+            manualCard.setAlpha(enabled ? 1f : 0.4f);
+        }
     }
 
     private void rebuildLevels(int type) {
         levelBox.removeAllViews();
+
         if (type <= 0 || type >= LEVEL_LABELS.length) {
             levelTitle.setVisibility(View.GONE);
             levelBox.setVisibility(View.GONE);
             return;
         }
+
         levelTitle.setVisibility(View.VISIBLE);
         levelBox.setVisibility(View.VISIBLE);
+
         String[] labels = LEVEL_LABELS[type];
         int lv = clamp(sp.getInt(Prefs.KEY_LEVEL, 1), 1, labels.length);
+
         levelBox.addView(chipGroup(labels, lv - 1, i -> {
             sp.edit().putInt(Prefs.KEY_LEVEL, i + 1).apply();
             refreshSummary();
@@ -354,17 +431,26 @@ public class SettingsActivity extends Activity {
     private Flow chipGroup(String[] labels, int selected, OnPick cb) {
         Flow flow = new Flow(this, dp(8), dp(8));
         final TextView[] chips = new TextView[labels.length];
+
         for (int i = 0; i < labels.length; i++) {
             final int idx = i;
+
             TextView c = chip(labels[i], i == selected);
             chips[i] = c;
+
             c.setOnClickListener(v -> {
                 if (!manualEnabled) return;
-                for (int k = 0; k < chips.length; k++) styleChip(chips[k], k == idx);
+
+                for (int k = 0; k < chips.length; k++) {
+                    styleChip(chips[k], k == idx);
+                }
+
                 cb.pick(idx);
             });
+
             flow.addView(c);
         }
+
         return flow;
     }
 
@@ -383,47 +469,70 @@ public class SettingsActivity extends Activity {
         protected void onMeasure(int widthSpec, int heightSpec) {
             int padH = getPaddingLeft() + getPaddingRight();
             int maxW = MeasureSpec.getSize(widthSpec) - padH;
+
             int x = 0;
             int y = 0;
             int rowH = 0;
+
             for (int i = 0; i < getChildCount(); i++) {
                 View c = getChildAt(i);
+
                 if (c.getVisibility() == GONE) continue;
-                measureChild(c, MeasureSpec.makeMeasureSpec(maxW, MeasureSpec.AT_MOST),
-                        MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED));
+
+                measureChild(
+                        c,
+                        MeasureSpec.makeMeasureSpec(maxW, MeasureSpec.AT_MOST),
+                        MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED)
+                );
+
                 int cw = c.getMeasuredWidth();
                 int ch = c.getMeasuredHeight();
+
                 if (x > 0 && x + cw > maxW) {
                     x = 0;
                     y += rowH + vGap;
                     rowH = 0;
                 }
+
                 x += cw + hGap;
                 rowH = Math.max(rowH, ch);
             }
+
             int totalH = y + rowH + getPaddingTop() + getPaddingBottom();
-            setMeasuredDimension(resolveSize(maxW + padH, widthSpec), resolveSize(totalH, heightSpec));
+
+            setMeasuredDimension(
+                    resolveSize(maxW + padH, widthSpec),
+                    resolveSize(totalH, heightSpec)
+            );
         }
 
         @Override
         protected void onLayout(boolean changed, int l, int t, int r, int b) {
             int maxW = r - l - getPaddingLeft() - getPaddingRight();
+
             int x = 0;
             int y = 0;
             int rowH = 0;
+
             for (int i = 0; i < getChildCount(); i++) {
                 View c = getChildAt(i);
+
                 if (c.getVisibility() == GONE) continue;
+
                 int cw = c.getMeasuredWidth();
                 int ch = c.getMeasuredHeight();
+
                 if (x > 0 && x + cw > maxW) {
                     x = 0;
                     y += rowH + vGap;
                     rowH = 0;
                 }
+
                 int left = getPaddingLeft() + x;
                 int top = getPaddingTop() + y;
+
                 c.layout(left, top, left + cw, top + ch);
+
                 x += cw + hGap;
                 rowH = Math.max(rowH, ch);
             }
