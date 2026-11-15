@@ -261,22 +261,39 @@ public class SettingsActivity extends Activity {
         return v;
     }
 
-    private LinearLayout card() {
-        LinearLayout l = new LinearLayout(this);
-        l.setOrientation(LinearLayout.VERTICAL);
-        l.setBackground(round(cCard, 18));
-        l.setPadding(dp(16), dp(4), dp(16), dp(4));
+    
+private LinearLayout card() {
+    LinearLayout l = new LinearLayout(this);
+    l.setOrientation(LinearLayout.VERTICAL);
 
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-        );
+    // 卡片背景和圆角
+    l.setBackground(round(cCard, 22));
 
-        lp.topMargin = dp(12);
-        l.setLayoutParams(lp);
+    // 卡片内部留白
+    l.setPadding(
+            dp(18),
+            dp(8),
+            dp(18),
+            dp(8)
+    );
 
-        return l;
-    }
+    // 卡片之间的间距
+    LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+    );
+
+    lp.topMargin = dp(16);
+    lp.bottomMargin = dp(2);
+
+    l.setLayoutParams(lp);
+
+    // 轻微阴影，增强卡片层次
+    l.setElevation(dp(1.5f));
+
+    return l;
+}
+
 
     // ---------- 顶部横幅 ----------
 
