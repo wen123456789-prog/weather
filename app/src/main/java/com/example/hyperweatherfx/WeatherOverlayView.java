@@ -7,6 +7,7 @@ import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.Path;
 import android.graphics.RadialGradient;
+import android.graphics.LinearGradient;
 import android.graphics.Rect;
 import android.graphics.Shader;
 import android.hardware.Sensor;
@@ -1188,13 +1189,32 @@ public class WeatherOverlayView extends View {
         c.save();
         c.clipPath(clip);
 
-        // 顶部白霜：叠 6 层越来越短的半透明白条，上浓下淡
-        paint.setStyle(Paint.Style.FILL);
-        paint.setColor(0xFFF4F8FF);
-        paint.setAlpha((int) (32f * fill * veilStrength));
-        for (int j = 1; j <= 6; j++) {
-            c.drawRect(l, t, r, t + h * veilFrac * j / 6f, paint);
-        }
+        // 顶部白霜：连续渐变
+paint.setStyle(Paint.Style.FILL);
+
+int[] frostColors = {
+        0x00F4F8FF,
+        0x20F4F8FF,
+        0x18F4F8FF,
+        0x08F4F8FF,
+        0x00F4F8FF
+};
+
+float[] frostPositions = {
+        0f, 0.12f, 0.38f, 0.72f, 1f
+};
+
+paint.setShader(new LinearGradient(
+        0f, t,
+        0f, t + h * veilFrac,
+        frostColors,
+        frostPositions,
+        Shader.TileMode.CLAMP
+));
+
+paint.setAlpha((int) (255f * fill * veilStrength));
+c.drawRect(l, t, r, t + h * veilFrac, paint);
+paint.setShader(null);
 
         // 雪粒
         int n = (int) Math.min(GRAIN_MAX, (w * h) / (dp * dp) / GRAIN_AREA_DP2);
