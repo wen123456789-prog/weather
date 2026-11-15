@@ -297,7 +297,6 @@ private LinearLayout card() {
 
     // ---------- 顶部横幅 ----------
 
-    private View buildHeader(boolean active) {
     
 private View buildHeader(boolean active) {
     LinearLayout h = new LinearLayout(this);
@@ -350,6 +349,8 @@ private View buildHeader(boolean active) {
 
     return h;
 }
+
+
 
 
     private void refreshSummary() {
