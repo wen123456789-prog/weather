@@ -61,6 +61,10 @@ public class WeatherOverlayView extends View {
     private static final float[] SNOW_SIZE = {0, 1.4f, 1.9f, 2.5f, 2.6f};
     private static final float[] SNOW_WIND = {0, 0f, 0f, 0f, -230f};
     private static final float[] SNOW_SWAY = {0, 20f, 20f, 20f, 45f};
+    /** 雪花碰到图标/文件夹/小组件顶部时，有多大比例会落在上面消失；其余的从它们前面穿过。0 = 全部穿过，1 = 全部停在顶上 */
+    private static final float SNOW_LAND_P = 0.25f;
+    /** 穿过图标/小组件的雪花，在它们上面显示时的透明度倍数（小一点，免得盖住内容） */
+    private static final float SNOW_INSIDE_ALPHA = 0.7f;
 
     private static final int[] HAIL_COUNT = {0, 24, 40, 64};
     private static final float[] HAIL_SIZE = {0, 2.2f, 3f, 3.8f};
@@ -118,6 +122,7 @@ public class WeatherOverlayView extends View {
     private static final class P {
         float x, y, vx, vy, size, phase, alpha;
         boolean bounced;
+        boolean lands; // 雪花：碰到图标顶部时是落在上面（true）还是穿过去（false）
     }
 
     /** 溅起的水花(kind 0) 或 从图标滴落的水滴(kind 1) */
@@ -441,6 +446,7 @@ public class WeatherOverlayView extends View {
                 p.vx = (rnd.nextFloat() - 0.5f) * 20f * dp + SNOW_WIND[level] * dp;
                 p.size = SNOW_SIZE[level] * dp * (0.6f + rnd.nextFloat() * 0.9f);
                 p.alpha = 0.55f + rnd.nextFloat() * 0.45f;
+                p.lands = rnd.nextFloat() < SNOW_LAND_P;
                 p.x = rnd.nextFloat() * w;
                 break;
             }
@@ -1003,11 +1009,18 @@ public class WeatherOverlayView extends View {
             p.phase += dt * (1f + p.size * 0.1f);
             p.x += (p.vx + tilt * p.vy * SNOW_TILT_BOOST + (float) Math.sin(p.phase) * sway) * dt;
             p.y += p.vy * dt;
-            // 落到屏幕底部的雪堆上，或落进图标/文件夹/小组件里，就消失，从上面重新飘下
-            if (p.y >= bottomTop || findTarget(p.x, p.y) != null) spawn(p, false);
+            // 落到屏幕底部的雪堆上就消失，从上面重新飘下；
+            // 碰到图标/文件夹/小组件时，一部分落在顶上消失，其余的从前面穿过去
+            boolean inside = false;
+            if (p.y >= bottomTop) {
+                spawn(p, false);
+            } else if (findTarget(p.x, p.y) != null) {
+                if (p.lands) spawn(p, false);
+                else inside = true;
+            }
             if (p.x < -10f * dp) p.x = w + 10f * dp;
             if (p.x > w + 10f * dp) p.x = -10f * dp;
-            paint.setAlpha((int) (p.alpha * 255f));
+            paint.setAlpha((int) (p.alpha * 255f * (inside ? SNOW_INSIDE_ALPHA : 1f)));
             c.drawCircle(p.x, p.y, p.size, paint);
         }
     }
@@ -1378,4 +1391,4 @@ public class WeatherOverlayView extends View {
             c.restore();
         }
     }
-            }
+                        }
