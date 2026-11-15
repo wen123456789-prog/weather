@@ -283,8 +283,8 @@ private LinearLayout card() {
             ViewGroup.LayoutParams.WRAP_CONTENT
     );
 
-    lp.topMargin = dp(16);
-    lp.bottomMargin = dp(2);
+    lp.topMargin = dp(12);
+    lp.bottomMargin = dp(0);
 
     l.setLayoutParams(lp);
 
