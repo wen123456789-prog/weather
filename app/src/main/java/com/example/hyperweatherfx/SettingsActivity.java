@@ -298,45 +298,59 @@ private LinearLayout card() {
     // ---------- 顶部横幅 ----------
 
     private View buildHeader(boolean active) {
-        LinearLayout h = new LinearLayout(this);
-        h.setOrientation(LinearLayout.VERTICAL);
+    
+private View buildHeader(boolean active) {
+    LinearLayout h = new LinearLayout(this);
+    h.setOrientation(LinearLayout.VERTICAL);
 
-        GradientDrawable bg = new GradientDrawable(
-                GradientDrawable.Orientation.TOP_BOTTOM,
-                new int[]{0xFF2B3A67, 0xFF0E1530}
-        );
+    GradientDrawable bg = new GradientDrawable(
+            GradientDrawable.Orientation.TL_BR,
+            new int[]{
+                    0xFF5269A8,
+                    0xFF293D72,
+                    0xFF17264D
+            }
+    );
 
-        bg.setCornerRadius(dp(22));
-        h.setBackground(bg);
-        h.setPadding(dp(20), dp(22), dp(20), dp(20));
+    bg.setCornerRadius(dp(26));
+    h.setBackground(bg);
+    h.setPadding(dp(22), dp(26), dp(22), dp(22));
 
-        h.addView(text("桌面天气特效", 24, 0xFFFFFFFF, true));
+    // 主标题
+    TextView title = text("桌面天气特效", 25, 0xFFFFFFFF, true);
+    h.addView(title);
 
-        summary = text("", 14, 0xFFC9D7F5, false);
-        summary.setPadding(0, dp(6), 0, dp(14));
-        h.addView(summary);
+    // 当前运行状态
+    summary = text("", 14, 0xFFE0E8FF, false);
+    summary.setPadding(0, dp(8), 0, dp(18));
+    h.addView(summary);
 
-        TextView pill = text(
-                active ? "●  模块已生效"
-                        : "⚠  还没在 LSPosed 里启用：请启用并勾选「系统桌面」",
-                12.5f,
-                active ? 0xFFBDF5D0 : 0xFFFFD38A,
-                false
-        );
+    // 模块状态标签
+    TextView pill = text(
+            active ? "●  模块已生效"
+                    : "⚠  还没在 LSPosed 里启用：请启用并勾选「系统桌面」",
+            12.5f,
+            active ? 0xFFBDF5D0 : 0xFFFFD38A,
+            false
+    );
 
-        pill.setBackground(round(0x26FFFFFF, 14));
-        pill.setPadding(dp(12), dp(6), dp(12), dp(6));
+    GradientDrawable pillBg = round(0x30FFFFFF, 16);
+    pill.setBackground(pillBg);
+    pill.setPadding(dp(14), dp(8), dp(14), dp(8));
 
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-        );
+    h.addView(pill);
 
-        pill.setLayoutParams(lp);
-        h.addView(pill);
+    // 横幅底部留白
+    LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+    );
+    lp.bottomMargin = dp(4);
+    h.setLayoutParams(lp);
 
-        return h;
-    }
+    return h;
+}
+
 
     private void refreshSummary() {
         if (summary == null) return;
