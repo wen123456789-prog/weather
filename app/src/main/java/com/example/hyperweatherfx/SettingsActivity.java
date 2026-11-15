@@ -73,7 +73,7 @@ public class SettingsActivity extends Activity {
 
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(dp(16), dp(8), dp(16), dp(32));
+        root.setPadding(dp(16), dp(12), dp(16), dp(32));
 
         root.addView(buildHeader(active));
 
