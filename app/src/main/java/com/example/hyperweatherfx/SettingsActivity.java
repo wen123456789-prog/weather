@@ -15,6 +15,7 @@ import android.view.ViewGroup;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
+import android.content.Intent;
 
 public class SettingsActivity extends Activity {
 
@@ -206,7 +207,39 @@ public class SettingsActivity extends Activity {
         help.addView(body);
 
         root.addView(help);
+        // 赞赏入口
+LinearLayout appreciationCard = card();
 
+LinearLayout appreciationRow = new LinearLayout(this);
+appreciationRow.setOrientation(LinearLayout.VERTICAL);
+appreciationRow.setPadding(dp(4), dp(12), dp(4), dp(12));
+appreciationRow.setGravity(Gravity.CENTER_VERTICAL);
+appreciationRow.setClickable(true);
+appreciationRow.setFocusable(true);
+
+appreciationRow.addView(
+        text("☁  赞赏支持", 16, cText, true)
+);
+
+TextView appreciationSubtitle = text(
+        "和云朵小精灵互动",
+        12.5f,
+        cSub,
+        false
+);
+appreciationSubtitle.setPadding(0, dp(5), 0, 0);
+
+appreciationRow.addView(appreciationSubtitle);
+
+appreciationRow.setOnClickListener(v ->
+        startActivity(new Intent(
+                SettingsActivity.this,
+                AppreciationActivity.class
+        ))
+);
+
+appreciationCard.addView(appreciationRow);
+root.addView(appreciationCard);
         ScrollView scrollView = new ScrollView(this);
         scrollView.setBackgroundColor(cBg);
         scrollView.setFillViewport(true);
