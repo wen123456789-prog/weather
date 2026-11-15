@@ -10,6 +10,7 @@ import android.view.HapticFeedbackConstants;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewConfiguration;
+import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
 import android.view.animation.DecelerateInterpolator;
 
@@ -30,6 +31,7 @@ public class HyperSwitch extends View {
     private final float trackHeight;
     private final float thumbRadius;
     private final float touchSlop;
+    private final float density;
 
     private boolean checked;
     private float progress;
@@ -47,7 +49,7 @@ public class HyperSwitch extends View {
         this.accentColor = accentColor;
         this.offTrackColor = dark ? 0xFF3A4254 : 0xFFD3D8E3;
 
-        float density = getResources().getDisplayMetrics().density;
+        density = getResources().getDisplayMetrics().density;
 
         trackWidth = 54f * density;
         trackHeight = 28f * density;
@@ -61,7 +63,8 @@ public class HyperSwitch extends View {
         setFocusable(true);
         setMinimumWidth((int) (58f * density));
         setMinimumHeight((int) (48f * density));
-        setContentDescription(initialChecked ? "已开启" : "已关闭");
+
+        updateContentDescription();
     }
 
     public void setOnCheckedChangeListener(OnCheckedChangeListener listener) {
@@ -76,9 +79,13 @@ public class HyperSwitch extends View {
         changeChecked(checked, true);
     }
 
+    private void updateContentDescription() {
+        setContentDescription(checked ? "已开启" : "已关闭");
+    }
+
     private void changeChecked(boolean value, boolean animate) {
-        boolean changed = this.checked != value;
-        this.checked = value;
+        boolean changed = checked != value;
+        checked = value;
 
         if (animator != null) {
             animator.cancel();
@@ -89,11 +96,11 @@ public class HyperSwitch extends View {
 
         if (animate) {
             animator = ValueAnimator.ofFloat(progress, target);
-            animator.setDuration(190);
-            animator.setInterpolator(new DecelerateInterpolator());
+            animator.setDuration(220);
+            animator.setInterpolator(new DecelerateInterpolator(1.5f));
 
-            animator.addUpdateListener(a -> {
-                progress = (float) a.getAnimatedValue();
+            animator.addUpdateListener(animation -> {
+                progress = (float) animation.getAnimatedValue();
                 invalidate();
             });
 
@@ -104,10 +111,10 @@ public class HyperSwitch extends View {
         }
 
         if (changed) {
-            setContentDescription(value ? "已开启" : "已关闭");
+            updateContentDescription();
 
             sendAccessibilityEvent(
-                    android.view.accessibility.AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED
+                    AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED
             );
 
             if (listener != null) {
@@ -118,8 +125,6 @@ public class HyperSwitch extends View {
 
     @Override
     protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
-        float density = getResources().getDisplayMetrics().density;
-
         int width = (int) (58f * density);
         int height = (int) (48f * density);
 
@@ -143,8 +148,10 @@ public class HyperSwitch extends View {
                 cy + trackHeight / 2f
         );
 
+        // 绘制轨道
         paint.setStyle(Paint.Style.FILL);
         paint.setColor(blendColor(offTrackColor, accentColor, progress));
+        paint.clearShadowLayer();
 
         canvas.drawRoundRect(
                 track,
@@ -153,12 +160,37 @@ public class HyperSwitch extends View {
                 paint
         );
 
+        // 计算滑块位置
         float left = track.left + thumbRadius + 2f;
         float right = track.right - thumbRadius - 2f;
         float thumbX = left + (right - left) * progress;
 
+        // 绘制滑块阴影
+        paint.setColor(0xFFFFFFFF);
+        paint.setShadowLayer(
+                2.5f * density,
+                0f,
+                1.5f * density,
+                0x35000000
+        );
+
+        canvas.drawCircle(
+                thumbX,
+                cy,
+                thumbRadius,
+                paint
+        );
+
+        // 绘制滑块主体
+        paint.clearShadowLayer();
         paint.setColor(thumbColor);
-        canvas.drawCircle(thumbX, cy, thumbRadius, paint);
+
+        canvas.drawCircle(
+                thumbX,
+                cy,
+                thumbRadius,
+                paint
+        );
     }
 
     private int blendColor(int from, int to, float amount) {
@@ -193,8 +225,10 @@ public class HyperSwitch extends View {
                     animator = null;
                 }
 
-                setScaleX(0.96f);
-                setScaleY(0.96f);
+                setPressed(true);
+                animate().scaleX(0.97f).scaleY(0.97f)
+                        .setDuration(100).start();
+
                 return true;
 
             case MotionEvent.ACTION_MOVE:
@@ -216,21 +250,32 @@ public class HyperSwitch extends View {
                 return true;
 
             case MotionEvent.ACTION_UP:
-                setScaleX(1f);
-                setScaleY(1f);
+                setPressed(false);
+                animate().scaleX(1f).scaleY(1f)
+                        .setDuration(130).start();
 
                 if (dragging) {
-                    changeChecked(progress >= 0.5f, true);
+                    boolean target = progress >= 0.5f;
+                    boolean changed = checked != target;
+
+                    changeChecked(target, true);
+
+                    if (changed) {
+                        performHapticFeedback(
+                                HapticFeedbackConstants.VIRTUAL_KEY
+                        );
+                    }
                 } else {
-                    changeChecked(!checked, true);
+                    performClick();
                 }
 
-                performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY);
                 return true;
 
             case MotionEvent.ACTION_CANCEL:
-                setScaleX(1f);
-                setScaleY(1f);
+                setPressed(false);
+                animate().scaleX(1f).scaleY(1f)
+                        .setDuration(130).start();
+
                 changeChecked(checked, true);
                 return true;
         }
@@ -240,14 +285,20 @@ public class HyperSwitch extends View {
 
     @Override
     public boolean performClick() {
-        boolean target = !checked;
-        changeChecked(target, true);
-        performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY);
-        return super.performClick();
+        super.performClick();
+
+        changeChecked(!checked, true);
+
+        performHapticFeedback(
+                HapticFeedbackConstants.VIRTUAL_KEY
+        );
+
+        return true;
     }
 
     @Override
-    public void onInitializeAccessibilityNodeInfo(AccessibilityNodeInfo info) {
+    public void onInitializeAccessibilityNodeInfo(
+            AccessibilityNodeInfo info) {
         super.onInitializeAccessibilityNodeInfo(info);
 
         info.setClassName("android.widget.Switch");
