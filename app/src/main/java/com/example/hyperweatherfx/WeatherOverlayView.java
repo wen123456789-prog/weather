@@ -136,6 +136,7 @@ public class WeatherOverlayView extends View {
     /** 桌面上的一个图标或文件夹，坐标是相对整个窗口的 */
     private static final class Icon {
         View v;
+        View gfx; // 图标内部真正的图案视图，用于每帧同步位置
         int l, t, r, b;
         boolean alive;
         boolean full;
@@ -233,7 +234,7 @@ public class WeatherOverlayView extends View {
     private Sensor tiltSensor;
     private boolean sensorOn = false;
     private float tiltTarget = 0f; // 传感器给出的目标方向，-1..1，正数 = 往屏幕右边斜
-    private float tilt = 0f;       // 平滑后实际使用的方向
+    private float tilt = 0f;       // 平滑后实际使用的方向，-1..1
     private final SensorEventListener tiltListener = new SensorEventListener() {
         @Override
         public void onSensorChanged(SensorEvent e) {
@@ -484,6 +485,11 @@ public class WeatherOverlayView extends View {
             scanIcons();
         }
 
+        // 每帧同步图标和内部图案的位置，避免拖动时冰霜边框滞后
+        if (needScan) {
+            refreshIconBounds();
+        }
+
         if (typeOk) {
             switch (type) {
                 case WeatherMapper.RAIN:
@@ -570,7 +576,7 @@ public class WeatherOverlayView extends View {
     private Icon findIcon(float x, float y, Icon skip) {
         for (int k = 0; k < iconN; k++) {
             Icon ic = icons[k];
-            if (ic == skip || ic.widget) continue;
+            if (ic == null || !ic.alive || ic == skip || ic.widget) continue;
             if (x >= ic.l && x <= ic.r && y >= ic.t && y <= ic.b) return ic;
         }
         return null;
@@ -580,7 +586,9 @@ public class WeatherOverlayView extends View {
     private Icon findTarget(float x, float y) {
         for (int k = 0; k < iconN; k++) {
             Icon ic = icons[k];
-            if (x >= ic.l && x <= ic.r && y >= ic.t && y <= ic.b) return ic;
+            if (ic != null && ic.alive
+                    && x >= ic.l && x <= ic.r
+                    && y >= ic.t && y <= ic.b) return ic;
         }
         return null;
     }
@@ -679,7 +687,7 @@ public class WeatherOverlayView extends View {
         if (iconN == 0) return null;
         for (int k = 0; k < 6; k++) {
             Icon ic = icons[rnd.nextInt(iconN)];
-            if (ic.full && !ic.widget) return ic;
+            if (ic != null && ic.alive && ic.full && !ic.widget) return ic;
         }
         return null;
     }
@@ -705,8 +713,7 @@ public class WeatherOverlayView extends View {
         free.width = STREAM_WIDTH[level] * dp;
         emitSplash(ic.l + free.relX * (ic.r - ic.l), ic.t, 3, 0.8f);
     }
-
-    private void spawnSideBead(Icon host, float relX0, float relXSide, float y0) {
+        private void spawnSideBead(Icon host, float relX0, float relXSide, float y0) {
         B free = null;
         for (int i = 0; i < MAX_B; i++) {
             if (bs[i].on && bs[i].host == host) return; // 一个图标同时只留一颗，免得太乱
@@ -834,6 +841,44 @@ public class WeatherOverlayView extends View {
         }
     }
 
+    /**
+     * 每帧刷新已经识别的图标和内部图案的位置。
+     * 全量扫描仍按原来的间隔执行，避免每帧递归遍历整棵桌面视图树。
+     */
+    private void refreshIconBounds() {
+        for (int k = 0; k < iconN; k++) {
+            Icon ic = icons[k];
+
+            if (ic == null || ic.v == null
+                    || !ic.v.isAttachedToWindow()
+                    || !ic.v.getGlobalVisibleRect(tmpRect)) {
+                if (ic != null) ic.alive = false;
+                continue;
+            }
+
+            ic.l = tmpRect.left;
+            ic.t = tmpRect.top;
+            ic.r = tmpRect.right;
+            ic.b = tmpRect.bottom;
+            ic.alive = true;
+
+            ic.full = tmpRect.height() >= 0.6f * ic.v.getHeight()
+                    && tmpRect.width() >= 0.6f * ic.v.getWidth();
+
+            if (ic.gfx != null
+                    && ic.gfx.isAttachedToWindow()
+                    && ic.gfx.getGlobalVisibleRect(gfxRect)) {
+                ic.hasGfx = true;
+                ic.gl = gfxRect.left;
+                ic.gt = gfxRect.top;
+                ic.gr = gfxRect.right;
+                ic.gb = gfxRect.bottom;
+            } else {
+                ic.hasGfx = false;
+            }
+        }
+    }
+
     private void walk(View v, float alphaAcc, int depth) {
         if (v == this || depth > 30 || v.getVisibility() != View.VISIBLE) return;
         float a = alphaAcc * v.getAlpha();
@@ -861,7 +906,10 @@ public class WeatherOverlayView extends View {
                 ic.widget = kind == 2;
                 ic.full = (tmpRect.bottom - tmpRect.top) >= 0.6f * v.getHeight()
                         && (tmpRect.right - tmpRect.left) >= 0.6f * v.getWidth();
+
                 ic.hasGfx = false;
+                ic.gfx = null;
+
                 if (kind == 1) {
                     // 找图标里真正的图案：最大的那个 ImageView，雪就按它的位置和大小来画
                     bestView = null;
@@ -871,6 +919,7 @@ public class WeatherOverlayView extends View {
                             && bestArea >= 0.2f * v.getWidth() * v.getHeight()
                             && bestView.getGlobalVisibleRect(gfxRect)) {
                         ic.hasGfx = true;
+                        ic.gfx = bestView;
                         ic.gl = gfxRect.left;
                         ic.gt = gfxRect.top;
                         ic.gr = gfxRect.right;
@@ -937,8 +986,7 @@ public class WeatherOverlayView extends View {
         classCache.put(k, kind);
         return kind;
     }
-
-    // ---------- 雷暴雨的闪电 ----------
+        // ---------- 雷暴雨的闪电 ----------
 
     private float flashIntensity(float a) {
         if (a < 0.05f) return a / 0.05f * 0.55f;
@@ -1034,7 +1082,7 @@ public class WeatherOverlayView extends View {
             float grow = dt / PILE_FILL_SECONDS[level];
             for (int k = 0; k < iconN; k++) {
                 Icon ic = icons[k];
-                if (!ic.full) continue;
+                if (ic == null || !ic.alive || !ic.full) continue;
                 Pile pl = piles.get(ic.v);
                 if (pl == null) {
                     pl = new Pile();
@@ -1057,7 +1105,7 @@ public class WeatherOverlayView extends View {
 
         for (int k = 0; k < iconN; k++) {
             Icon ic = icons[k];
-            if (!ic.full) continue;
+            if (ic == null || !ic.alive || !ic.full) continue;
             Pile pl = piles.get(ic.v);
             if (pl == null || pl.fill <= 0.001f) continue;
             float iw = ic.r - ic.l;
@@ -1183,8 +1231,7 @@ public class WeatherOverlayView extends View {
         float v = (float) Math.sin(seed * 12.9898 + k * 78.233 + salt * 37.719) * 43758.5453f;
         return v - (float) Math.floor(v);
     }
-
-    /**
+        /**
      * 圆角矩形周长上第 s 个位置（从左上角圆角之后的上边开始，顺时针）。
      * 结果写进 ptX/ptY（位置）和 ptNX/ptNY（朝外的方向）。
      */
@@ -1391,4 +1438,4 @@ public class WeatherOverlayView extends View {
             c.restore();
         }
     }
-                        }
+}
