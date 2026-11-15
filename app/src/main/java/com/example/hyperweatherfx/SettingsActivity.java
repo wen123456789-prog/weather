@@ -415,18 +415,22 @@ public class SettingsActivity extends Activity {
     }
 
     private TextView chip(String label, boolean selected) {
-        TextView t = text(label, 14, cChipText, false);
-        t.setGravity(Gravity.CENTER);
-        t.setPadding(dp(16), dp(9), dp(16), dp(9));
-        styleChip(t, selected);
-        return t;
-    }
+    TextView t = text(label, 14, cChipText, false);
+    t.setGravity(Gravity.CENTER);
+    t.setMinWidth(dp(56));
+    t.setPadding(dp(18), dp(10), dp(18), dp(10));
+    t.setBackground(round(selected ? cAccent : cChip, 12));
+    styleChip(t, selected);
+    return t;
+}
 
-    private void styleChip(TextView t, boolean selected) {
-        t.setBackground(round(selected ? cAccent : cChip, 20));
-        t.setTextColor(selected ? cOnAccent : cChipText);
-        t.setTypeface(null, selected ? Typeface.BOLD : Typeface.NORMAL);
-    }
+private void styleChip(TextView t, boolean selected) {
+    t.setBackground(round(selected ? cAccent : cChip, 12));
+    t.setTextColor(selected ? cOnAccent : cChipText);
+    t.setTypeface(null, selected ? Typeface.BOLD : Typeface.NORMAL);
+    t.setAlpha(selected ? 1.0f : 0.85f);
+    t.setElevation(dp(selected ? 2 : 0));
+}
 
     private Flow chipGroup(String[] labels, int selected, OnPick cb) {
         Flow flow = new Flow(this, dp(8), dp(8));
