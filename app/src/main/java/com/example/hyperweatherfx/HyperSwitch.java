@@ -48,6 +48,7 @@ public class HyperSwitch extends View {
         this.offTrackColor = dark ? 0xFF3A4254 : 0xFFD3D8E3;
 
         float density = getResources().getDisplayMetrics().density;
+
         trackWidth = 54f * density;
         trackHeight = 28f * density;
         thumbRadius = 11f * density;
@@ -60,6 +61,7 @@ public class HyperSwitch extends View {
         setFocusable(true);
         setMinimumWidth((int) (58f * density));
         setMinimumHeight((int) (48f * density));
+        setContentDescription(initialChecked ? "已开启" : "已关闭");
     }
 
     public void setOnCheckedChangeListener(OnCheckedChangeListener listener) {
@@ -89,10 +91,12 @@ public class HyperSwitch extends View {
             animator = ValueAnimator.ofFloat(progress, target);
             animator.setDuration(190);
             animator.setInterpolator(new DecelerateInterpolator());
+
             animator.addUpdateListener(a -> {
                 progress = (float) a.getAnimatedValue();
                 invalidate();
             });
+
             animator.start();
         } else {
             progress = target;
@@ -101,6 +105,7 @@ public class HyperSwitch extends View {
 
         if (changed) {
             setContentDescription(value ? "已开启" : "已关闭");
+
             sendAccessibilityEvent(
                     android.view.accessibility.AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED
             );
@@ -113,8 +118,10 @@ public class HyperSwitch extends View {
 
     @Override
     protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
-        int width = (int) (58f * getResources().getDisplayMetrics().density);
-        int height = (int) (48f * getResources().getDisplayMetrics().density);
+        float density = getResources().getDisplayMetrics().density;
+
+        int width = (int) (58f * density);
+        int height = (int) (48f * density);
 
         setMeasuredDimension(
                 resolveSize(width, widthMeasureSpec),
@@ -138,7 +145,13 @@ public class HyperSwitch extends View {
 
         paint.setStyle(Paint.Style.FILL);
         paint.setColor(blendColor(offTrackColor, accentColor, progress));
-        canvas.drawRoundRect(track, trackHeight / 2f, trackHeight / 2f, paint);
+
+        canvas.drawRoundRect(
+                track,
+                trackHeight / 2f,
+                trackHeight / 2f,
+                paint
+        );
 
         float left = track.left + thumbRadius + 2f;
         float right = track.right - thumbRadius - 2f;
@@ -153,10 +166,13 @@ public class HyperSwitch extends View {
 
         int a = (int) (((from >>> 24) & 0xFF)
                 + (((to >>> 24) & 0xFF) - ((from >>> 24) & 0xFF)) * amount);
+
         int r = (int) (((from >>> 16) & 0xFF)
                 + (((to >>> 16) & 0xFF) - ((from >>> 16) & 0xFF)) * amount);
+
         int g = (int) (((from >>> 8) & 0xFF)
                 + (((to >>> 8) & 0xFF) - ((from >>> 8) & 0xFF)) * amount);
+
         int b = (int) ((from & 0xFF)
                 + ((to & 0xFF) - (from & 0xFF)) * amount);
 
@@ -166,6 +182,7 @@ public class HyperSwitch extends View {
     @Override
     public boolean onTouchEvent(MotionEvent event) {
         switch (event.getActionMasked()) {
+
             case MotionEvent.ACTION_DOWN:
                 downX = event.getX();
                 startProgress = progress;
@@ -189,10 +206,13 @@ public class HyperSwitch extends View {
 
                 if (dragging) {
                     float travel = trackWidth - thumbRadius * 2f - 4f;
+
                     progress = Math.max(0f, Math.min(1f,
                             startProgress + dx / travel));
+
                     invalidate();
                 }
+
                 return true;
 
             case MotionEvent.ACTION_UP:
@@ -206,7 +226,6 @@ public class HyperSwitch extends View {
                 }
 
                 performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY);
-                super.performClick();
                 return true;
 
             case MotionEvent.ACTION_CANCEL:
@@ -221,13 +240,16 @@ public class HyperSwitch extends View {
 
     @Override
     public boolean performClick() {
-        super.performClick();
-        return true;
+        boolean target = !checked;
+        changeChecked(target, true);
+        performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY);
+        return super.performClick();
     }
 
     @Override
     public void onInitializeAccessibilityNodeInfo(AccessibilityNodeInfo info) {
         super.onInitializeAccessibilityNodeInfo(info);
+
         info.setClassName("android.widget.Switch");
         info.setCheckable(true);
         info.setChecked(checked);
