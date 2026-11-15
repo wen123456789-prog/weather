@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- 云 -->
+    <path
+        android:fillColor="#FFF4F8FF"
+        android:pathData="M29,48a10,10 0 1,0 20,0a10,10 0 1,0 -20,0z" />
+    <path
+        android:fillColor="#FFF4F8FF"
+        android:pathData="M38,41a14,14 0 1,0 28,0a14,14 0 1,0 -28,0z" />
+    <path
+        android:fillColor="#FFF4F8FF"
+        android:pathData="M57,49a10,10 0 1,0 20,0a10,10 0 1,0 -20,0z" />
+    <path
+        android:fillColor="#FFF4F8FF"
+        android:pathData="M37.5,49H68.5A4.5,4.5 0 0 1 68.5,58H37.5A4.5,4.5 0 0 1 37.5,49Z" />
+    <!-- 雨 -->
+    <path
+        android:pathData="M43,65L40,75M53,66L50,76"
+        android:strokeColor="#FF9ED0FF"
+        android:strokeLineCap="round"
+        android:strokeWidth="3" />
+    <!-- 雪花 -->
+    <path
+        android:pathData="M65,66.5L65,77.5M60.24,69.25L69.76,74.75M60.24,74.75L69.76,69.25"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeLineCap="round"
+        android:strokeWidth="2" />
+</vector>
